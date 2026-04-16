@@ -1,0 +1,4445 @@
+/**
+ * ⚠️ รันฟังก์ชันนี้ 1 ครั้งจาก Apps Script Editor (▶ Run) ก่อน/หลัง Deploy ใหม่
+ * เพื่อ grant permission DriveApp ให้กับ Web App
+ * ขั้นตอน: Script Editor → เลือก initDriveAccess → กด Run → Allow permissions
+ */
+function initDriveAccess() {
+  try {
+    var folder = DriveApp.getFolderById(ATTACHMENTS_FOLDER_ID);
+    Logger.log('✅ DriveApp ทำงานได้ปกติ');
+    Logger.log('✅ โฟลเดอร์: ' + folder.getName() + ' (id=' + ATTACHMENTS_FOLDER_ID + ')');
+    // สร้างไฟล์ทดสอบแล้วลบทันที
+    var testBlob = Utilities.newBlob('HRD Drive Access Test ' + new Date().toISOString(), 'text/plain', '_hrd_test_.txt');
+    var testFile = folder.createFile(testBlob);
+    testFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    var testUrl = 'https://drive.google.com/file/d/' + testFile.getId() + '/view?usp=sharing';
+    Logger.log('✅ สร้างไฟล์ทดสอบสำเร็จ: ' + testUrl);
+    testFile.setTrashed(true);
+    Logger.log('✅ ลบไฟล์ทดสอบแล้ว');
+    Logger.log('✅ DriveApp พร้อมใช้งาน! Deploy Web App ได้เลย');
+  } catch (e) {
+    Logger.log('❌ DriveApp Error: ' + e.toString());
+    Logger.log('  → ตรวจสอบ ATTACHMENTS_FOLDER_ID: ' + ATTACHMENTS_FOLDER_ID);
+    Logger.log('  → ถ้า "not authorized" กด Run อีกครั้งแล้วกด Allow');
+  }
+}
+
+/**
+ * ทดสอบอัพโหลดไฟล์ PDF จำลองไปยัง Drive
+ * รันจาก Script Editor เพื่อยืนยันก่อน deploy
+ */
+function testDriveUpload() {
+  try {
+    var folder = DriveApp.getFolderById(ATTACHMENTS_FOLDER_ID);
+    Logger.log('\u2705 โฟลเดอร์: ' + folder.getName());
+    var fakePdfB64 = 'JVBERi0xLjQKMSAwIG9iago8PAovVHlwZSAvQ2F0YWxvZwovUGFnZXMgMiAwIFIKPj4KZW5kb2JqCjIgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFszIDAgUl0KL0NvdW50IDEKPJ4KZW5kb2JqCjMgMCBvYmoKPDwKL1R5cGUgL1BhZ2UKL1BhcmVudCAyIDAgUgovTWVkaWFCb3ggWzAgMCA2MTIgNzkyXQo+PgplbmRvYmoKeHJlZgowIDQKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAp0cmFpbGVyCjw8Ci9TaXplIDQKL1Jvb3QgMSAwIFIKPj4Kc3RhcnR4cmVmCjE5MAolJUVPRgo=';
+    var bytes = Utilities.base64Decode(fakePdfB64);
+    var blob  = Utilities.newBlob(bytes, 'application/pdf', 'test_hrd_upload.pdf');
+    var file  = folder.createFile(blob);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    var url = 'https://drive.google.com/file/d/' + file.getId() + '/view?usp=sharing';
+    Logger.log('\u2705 อัพโหลดสำเร็จ! URL: ' + url);
+    file.setTrashed(true);
+    Logger.log('\u2705 ระบบอัพโหลดพร้อมใช้งาน');
+  } catch (e) {
+    Logger.log('\u274c testDriveUpload Error: ' + e.toString());
+  }
+}
+
+/**
+ * ตรวจสอบสถานะ Drive + Spreadsheet ทั้งหมด (รันเพื่อ diagnose)
+ */
+function checkSystemStatus() {
+  Logger.log('=== HRD System Status Check ===');
+  try {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    Logger.log('\u2705 SpreadsheetApp: ' + ss.getName());
+    var ts = ss.getSheetByName('\u0e2d\u0e1a\u0e23\u0e21 \u0e1b\u0e35\u0e07\u0e1a\u0e1b\u0e23\u0e30\u0e21\u0e32\u0e13 2569');
+    Logger.log(ts ? '\u2705 Sheet อบรมฯ: ' + ts.getLastRow() + ' แถว' : '\u26a0\ufe0f ยังไม่มี Sheet อบรมฯ');
+  } catch (e) { Logger.log('\u274c SpreadsheetApp: ' + e.message); }
+  try {
+    var folder = DriveApp.getFolderById(ATTACHMENTS_FOLDER_ID);
+    Logger.log('\u2705 DriveApp โฟลเดอร์: ' + folder.getName());
+  } catch (e) {
+    Logger.log('\u274c DriveApp: ' + e.message);
+    Logger.log('   \u2192 รัน initDriveAccess() แล้ว grant permission ก่อน');
+  }
+  try { Logger.log('\u2705 Script user: ' + Session.getActiveUser().getEmail()); } catch(e) {}
+  Logger.log('=== เสร็จสิ้น ===');
+}
+
+/**
+ * ▶ รัน quickDriveTest() เพื่อทดสอบสิทธิ์อัพโหลด Drive ทีละขั้นตอน
+ * ดู Log เพื่อระบุว่าปัญหาอยู่ที่ไหน
+ */
+function quickDriveTest() {
+  Logger.log('--- Quick Drive Test ---');
+  Logger.log('Account: ' + Session.getActiveUser().getEmail());
+
+  // Test 1: createFile ใน root Drive
+  try {
+    var f1 = DriveApp.createFile(
+      Utilities.newBlob('root test', 'text/plain', '_root_test.txt')
+    );
+    Logger.log('\u2705 createFile in root: OK — id=' + f1.getId());
+    f1.setTrashed(true);
+  } catch (e) {
+    Logger.log('\u274c createFile in root: FAIL — ' + e.message);
+    Logger.log('  \u2192 DriveApp scope ยังไม่ได้รับ authorization');
+    Logger.log('  \u2192 ตรวจสอบ appsscript.json และกด Run อีกครั้ง → Allow');
+    return;
+  }
+
+  // Test 2: createFile ใน folder เป้าหมาย
+  try {
+    var folder = DriveApp.getFolderById(ATTACHMENTS_FOLDER_ID);
+    Logger.log('\u2705 folder: ' + folder.getName());
+    var f2 = folder.createFile(
+      Utilities.newBlob('folder test', 'text/plain', '_folder_test.txt')
+    );
+    Logger.log('\u2705 createFile in folder: OK — id=' + f2.getId());
+    f2.setTrashed(true);
+    Logger.log('');
+    Logger.log('\ud83c\udf89 ทุกอย่างพร้อม! Deploy \u2192 New version ได้เลย');
+  } catch (e) {
+    Logger.log('\u274c createFile in folder: FAIL — ' + e.message);
+    Logger.log('');
+    Logger.log('\u26a0 root Drive สร้างได้ แต่ folder นี้ไม่ได้');
+    Logger.log('  \u2192 Folder สร้างโดย account อื่น หรือสิทธิ์ไม่ถึง Editor');
+    Logger.log('  \u2192 รัน createNewAttachmentsFolder() แล้ว copy ID ใหม่มาใส่ ATTACHMENTS_FOLDER_ID');
+  }
+}
+
+// ============================================
+// === ตั้งค่าหลัก (แก้ไขค่าเหล่านี้ก่อนใช้งาน) ===
+// ============================================
+
+var SPREADSHEET_ID  = '1g5dxhE-9tT0vqA3chSZ6hLsjeHkafAqgpO-bdbUtwFM';
+
+function getAdminPassword() {
+  return PropertiesService.getScriptProperties().getProperty('ADMIN_PASSWORD');
+}
+
+function getStaffPassword() {
+  return PropertiesService.getScriptProperties().getProperty('STAFF_PASSWORD');
+}
+
+function loginAdmin(password) {
+  if (password !== getAdminPassword()) {
+    return { success: false };
+  }
+
+  var token = Utilities.getUuid();
+
+  CacheService.getScriptCache().put(token, "admin", 3600); // 1 ชม.
+
+  return { success: true, token: token };
+}
+function loginStaff(password) {
+  if (password !== getStaffPassword()) {
+    return { success: false };
+  }
+
+  var token = Utilities.getUuid();
+
+  CacheService.getScriptCache().put(token, "staff", 3600); // 1 ชม.
+
+  return { success: true, token: token };
+}
+function verifyStaffToken(token) {
+  return CacheService.getScriptCache().get(token) === "staff";
+}
+function login(role, password) {
+  if (role === 'admin' && password === getAdminPassword()) {
+    var token = Utilities.getUuid();
+    CacheService.getScriptCache().put(token, "admin", 3600);
+    return { success: true, token: token, role: 'admin' };
+  }
+
+  if (role === 'staff' && password === getStaffPassword()) {
+    var token = Utilities.getUuid();
+    CacheService.getScriptCache().put(token, "staff", 3600);
+    return { success: true, token: token, role: 'staff' };
+  }
+
+  return { success: false };
+}
+// ── โฟลเดอร์ Google Drive สำหรับเก็บเอกสารแนบ ──
+// ⚠️  ถ้า error "Access denied" → รัน createNewAttachmentsFolder() แล้วเปลี่ยน ID ที่นี่
+var ATTACHMENTS_FOLDER_ID = '1Lr86HW_cF8pocuxi-E0cDTMNI_sijqPQ';
+
+// ── หมวดหมู่ที่ไม่นับหน่วยกิตสะสม (บันทึกชั่วโมงไว้แต่ไม่รวมใน totalHours) ──
+var NO_CREDIT_CAT = 'ประชุมคณะกรรมการ/คณะทำงาน/ประชุมชี้แจง/ประชุมผู้รับผิดชอบงาน ฯ';
+
+// ============================================
+// === 🔧 Drive Folder Setup Functions ===
+// ============================================
+
+/**
+ * ▶ รัน STEP 1 ก่อน: diagnoseFolderPermission()
+ *   ดูว่าปัญหาอยู่ที่ไหน
+ *
+ * ▶ รัน STEP 2 ถ้าจำเป็น: createNewAttachmentsFolder()
+ *   สร้างโฟลเดอร์ใหม่ใน My Drive แล้ว copy ID มาใส่ ATTACHMENTS_FOLDER_ID
+ *
+ * ▶ รัน STEP 3: initDriveAccess()
+ *   ยืนยันว่าทุกอย่างพร้อม แล้ว Deploy → New version
+ */
+
+/**
+ * STEP 1 — ตรวจสอบสิทธิ์โฟลเดอร์ปัจจุบัน
+ */
+function diagnoseFolderPermission() {
+  Logger.log('=== Folder Permission Diagnosis ===');
+  Logger.log('FOLDER_ID: ' + ATTACHMENTS_FOLDER_ID);
+  var folder;
+  try {
+    folder = DriveApp.getFolderById(ATTACHMENTS_FOLDER_ID);
+    Logger.log('\u2705 Step 1 getFolderById: OK — ' + folder.getName());
+  } catch (e) {
+    Logger.log('\u274c Step 1 getFolderById: FAIL — ' + e.message);
+    Logger.log('   \u2192 โฟลเดอร์ไม่มีอยู่ หรือไม่ได้แชร์ให้ account นี้');
+    return;
+  }
+  try {
+    var owner = folder.getOwner();
+    Logger.log('\ud83d\udc64 Owner: ' + (owner ? owner.getEmail() : '?'));
+    Logger.log('\ud83d\udc64 Me:    ' + Session.getActiveUser().getEmail());
+  } catch(e) {}
+  try {
+    var t = folder.createFile(Utilities.newBlob('test','text/plain','_perm_test.txt'));
+    t.setTrashed(true);
+    Logger.log('\u2705 Step 2 createFile: OK — มีสิทธิ์เขียน ใช้งานได้เลย!');
+    Logger.log('   \u2192 ปัญหาน่าจะอยู่ที่ appsscript.json หรือ Web App scope');
+    Logger.log('   \u2192 ตรวจสอบ appsscript.json และ Redeploy → New version');
+  } catch (e) {
+    Logger.log('\u274c Step 2 createFile: FAIL — ' + e.message);
+    Logger.log('');
+    Logger.log('\ud83d\udd27 สาเหตุ: สิทธิ์เป็นแค่ "Viewer" ไม่ใช่ "Editor"');
+    Logger.log('   \u2192 รัน createNewAttachmentsFolder() เพื่อสร้างโฟลเดอร์ใหม่');
+  }
+}
+
+/**
+ * STEP 2 — สร้างโฟลเดอร์ใหม่ใน My Drive (ถ้าโฟลเดอร์เดิมไม่มีสิทธิ์เขียน)
+ * หลังรันแล้ว: copy ID จาก Log มาแทนใน ATTACHMENTS_FOLDER_ID บรรทัด 93
+ */
+function createNewAttachmentsFolder() {
+  try {
+    var newFolder = DriveApp.createFolder('HRD_Attachments_2569');
+    var newId = newFolder.getId();
+    // ทดสอบสร้างไฟล์ทันที
+    var t = newFolder.createFile(Utilities.newBlob('test','text/plain','_test.txt'));
+    t.setTrashed(true);
+    Logger.log('\u2705 สร้างโฟลเดอร์ใหม่สำเร็จ!');
+    Logger.log('');
+    Logger.log('\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550');
+    Logger.log('\u2605 FOLDER ID ใหม่ (copy นี้): ' + newId);
+    Logger.log('\u2605 URL: https://drive.google.com/drive/folders/' + newId);
+    Logger.log('');
+    Logger.log('ขั้นตอนต่อไป:');
+    Logger.log('1. Copy ID: ' + newId);
+    Logger.log('2. แก้บรรทัด ATTACHMENTS_FOLDER_ID ใน รหัส.gs ให้เป็น ID ใหม่');
+    Logger.log('3. กด Save');
+    Logger.log('4. รัน initDriveAccess() อีกครั้ง');
+    Logger.log('5. Deploy \u2192 New version');
+    Logger.log('\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550');
+  } catch (e) {
+    Logger.log('\u274c Error: ' + e.toString());
+  }
+}
+
+// ============================================
+// === HTML Rendering — แยก URL ผู้ใช้ / Admin ===
+// ============================================
+//
+//  URL ปกติ   : ?  (ไม่มี parameter)      → โหลด index.html  (4 แท็บ ไม่มีพนักงาน)
+//  URL Admin  : ?mode=admin               → โหลด index.html  พร้อมส่ง isAdmin=true
+//                                           แล้วหน้าจะแสดงปุ่มล็อกอินแท็บพนักงาน
+//
+//  ข้อดี: ใช้ไฟล์ HTML เดียว ไม่ต้อง deploy หลายครั้ง
+//  ข้อดี: Admin Password ตรวจสอบฝั่ง Server (GAS) ไม่ใช่แค่ JS
+
+function doGet(e) {
+  var template = HtmlService.createTemplateFromFile('index');
+  // ส่งค่า isAdminMode ไปให้ HTML template ใช้ตัดสินใจแสดง/ซ่อนแท็บพนักงาน
+  template.isAdminMode = (e && e.parameter && e.parameter.mode === 'admin');
+  return template.evaluate()
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+function include(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+// ============================================
+// === Helper Function สำหรับหาคอลัมน์ (รองรับชื่อไทย/อังกฤษ/ดึงตาม Index สำรอง) ===
+// ============================================
+function getColIdx(hdr, enName, thName, fallbackIdx) {
+  var idx = hdr.indexOf(enName);
+  if (idx === -1 && thName) idx = hdr.indexOf(thName);
+  return idx !== -1 ? idx : fallbackIdx;
+}
+// ============================================
+// === 1. getAllUniqueStaffNames() ===
+// ดึงรายชื่อพนักงานไม่ซ้ำจาก Sheet "อบรม ปีงบประมาณ 2569"
+// ============================================
+function getAllUniqueStaffNames() {
+  try {
+    var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName('อบรม ปีงบประมาณ 2569'); 
+    if (!sheet || sheet.getLastRow() <= 1) {
+      return { success: true, data: [] };
+    }
+
+    var data = sheet.getDataRange().getValues();
+    var hdr  = data[0].map(function(h) { return String(h || '').trim(); });
+    
+    // ใช้ Header ภาษาไทยตามชีท อบรม ปีงบประมาณ 2569
+    var cName = hdr.indexOf('ชื่อ-สกุล');
+    var cPos  = hdr.indexOf('ตำแหน่ง');
+    var cMis  = hdr.indexOf('กลุ่มภารกิจ');
+    var cDept = hdr.indexOf('กลุ่มงาน');
+    var cLine = hdr.indexOf('LINE ID');
+
+    if (cName < 0) {
+      return { success: false, message: 'ไม่พบคอลัมน์ "ชื่อ-สกุล" ใน Sheet อบรม ปีงบประมาณ 2569' };
+    }
+
+    var personMap = {};
+    for (var i = 1; i < data.length; i++) {
+      var name = String(data[i][cName] || '').trim();
+      if (!name) continue;
+      var lineId = cLine >= 0 ? String(data[i][cLine] || '').trim() : '';
+      
+      if (!personMap[name] || lineId) {
+        personMap[name] = {
+          fullName    : name,
+          position    : cPos  >= 0 ? String(data[i][cPos]  || '').trim() : '',
+          missionGroup: cMis  >= 0 ? String(data[i][cMis]  || '').trim() : '',
+          department  : cDept >= 0 ? String(data[i][cDept] || '').trim() : '',
+          lineId      : lineId
+        };
+      }
+    }
+
+    var results = Object.values(personMap);
+    results.sort(function(a, b) { return a.fullName.localeCompare(b.fullName, 'th'); });
+    Logger.log('✅ getAllUniqueStaffNames: ' + results.length + ' คน จาก อบรม ปีงบประมาณ 2569');
+    return { success: true, data: results };
+  } catch (e) {
+    Logger.log('❌ getAllUniqueStaffNames: ' + e);
+    return { success: false, message: e.toString() };
+  }
+}
+// ============================================
+// === 2. getEmployeeLineData(token) ===
+// ดึง LINE ID จาก Sheet "อบรม ปีงบประมาณ 2569"
+// ============================================
+function getEmployeeLineData(token) {
+  if (!verifyAdminToken(token)) {
+    return { success: false, message: 'ไม่มีสิทธิ์ดูข้อมูลนี้ กรุณา Login ใหม่' };
+  }
+  try {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    // ── อ่าน LINE ID จากชีท "อบรม ปีงบประมาณ 2569" ──
+    var trainSheet = ss.getSheetByName('อบรม ปีงบประมาณ 2569');
+    var lineFromTrain = {}; 
+    if (trainSheet && trainSheet.getLastRow() > 1) {
+      var tData = trainSheet.getDataRange().getValues();
+      var tHdr  = tData[0].map(function(h) { return String(h || '').trim(); });
+      var tName = tHdr.indexOf('ชื่อ-สกุล');
+      var tLine = tHdr.indexOf('LINE ID');
+      if (tName >= 0 && tLine >= 0) {
+        for (var i = 1; i < tData.length; i++) {
+          var n = String(tData[i][tName] || '').trim();
+          var l = String(tData[i][tLine] || '').trim();
+          if (n && l) lineFromTrain[n] = l;
+        }
+      }
+    }
+
+    // ── อ่านสถานะแจ้งเตือนจาก Sheet "ข้อมูลพนักงาน" ──
+    var statusMap = {};
+    var empSheet  = ss.getSheetByName('ข้อมูลพนักงาน');
+    if (empSheet && empSheet.getLastRow() > 1) {
+      var eData   = empSheet.getDataRange().getValues();
+      var eHdr    = eData[0].map(function(h) { return String(h || '').trim(); });
+      var eName   = eHdr.indexOf('ชื่อ-สกุล');
+      var eStat   = eHdr.indexOf('สถานะแจ้งเตือน');
+      var eLine   = eHdr.indexOf('LINE User ID');
+      if (eName >= 0) {
+        for (var j = 1; j < eData.length; j++) {
+          var en = String(eData[j][eName] || '').trim();
+          if (!en) continue;
+          statusMap[en] = eStat >= 0 ? String(eData[j][eStat] || 'เปิดใช้งาน').trim() : 'เปิดใช้งาน';
+          if (!lineFromTrain[en] && eLine >= 0) {
+            var el = String(eData[j][eLine] || '').trim();
+            if (el) lineFromTrain[en] = el;
+          }
+        }
+      }
+    }
+
+    var results = Object.keys(lineFromTrain).map(function(name) {
+      return {
+        fullName: name,
+        lineId  : lineFromTrain[name],
+        status  : statusMap[name] || 'เปิดใช้งาน'
+      };
+    });
+    results.sort(function(a, b) { return a.fullName.localeCompare(b.fullName, 'th'); });
+
+    Logger.log('✅ getEmployeeLineData: ' + results.length + ' รายการ');
+    return { success: true, data: results };
+  } catch (e) {
+    Logger.log('❌ getEmployeeLineData: ' + e);
+    return { success: false, message: e.toString() };
+  }
+}
+
+// ============================================
+// === 3. saveEmployeeLineData(data, token) ===
+// ============================================
+function saveEmployeeLineData(data, token) {
+  if (!data._internal && !verifyAdminToken(token)) {
+    return { success: false, message: 'ไม่มีสิทธิ์แก้ไขข้อมูลนี้ กรุณา Login ใหม่' };
+  }
+  try {
+    var ss       = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var fullName = String(data.fullName || '').trim();
+    var lineId   = String(data.lineId   || '').trim();
+    var status   = String(data.status   || 'เปิดใช้งาน').trim();
+
+    // ── 1. เขียน LINE ID กลับไปทุกแถวใน "อบรม ปีงบประมาณ 2569" ──
+    var trainSheet = ss.getSheetByName('อบรม ปีงบประมาณ 2569');
+    var updatedRows = 0;
+    if (trainSheet && trainSheet.getLastRow() > 1) {
+      var tData = trainSheet.getDataRange().getValues();
+      var tHdr  = tData[0].map(function(h) { return String(h || '').trim(); });
+      var tName = tHdr.indexOf('ชื่อ-สกุล');
+      var tLine = tHdr.indexOf('LINE ID');
+      if (tName >= 0 && tLine >= 0) {
+        for (var i = 1; i < tData.length; i++) {
+          var rowName = String(tData[i][tName] || '').trim();
+          if (rowName === fullName) {
+            trainSheet.getRange(i + 1, tLine + 1).setValue(lineId);
+            updatedRows++;
+          }
+        }
+        if (updatedRows > 0) SpreadsheetApp.flush();
+        Logger.log('✅ อัปเดต LINE ID ใน อบรม ปีงบประมาณ 2569: ' + updatedRows + ' แถว');
+      }
+    }
+
+    // ── 2. บันทึก/อัปเดตสถานะใน Sheet "ข้อมูลพนักงาน" ──
+    var empSheet = ss.getSheetByName('ข้อมูลพนักงาน');
+    if (!empSheet) {
+      empSheet = ss.insertSheet('ข้อมูลพนักงาน');
+      var headers = ['ชื่อ-สกุล', 'LINE User ID', 'สถานะแจ้งเตือน', 'ตำแหน่ง', 'กลุ่มภารกิจ', 'กลุ่มงาน', 'อัปเดตล่าสุด'];
+      empSheet.getRange(1, 1, 1, headers.length)
+              .setValues([headers]).setFontWeight('bold')
+              .setBackground('#1e3a8a').setFontColor('#ffffff');
+      empSheet.setFrozenRows(1);
+    }
+
+    var eData   = empSheet.getLastRow() > 1 ? empSheet.getRange(2, 1, empSheet.getLastRow() - 1, empSheet.getLastColumn()).getValues() : [];
+    var eHdr    = empSheet.getRange(1, 1, 1, empSheet.getLastColumn()).getValues()[0].map(function(h) { return String(h || '').trim(); });
+    var eName   = eHdr.indexOf('ชื่อ-สกุล');
+    var eLine   = eHdr.indexOf('LINE User ID');
+    var eStat   = eHdr.indexOf('สถานะแจ้งเตือน');
+    var ePos    = eHdr.indexOf('ตำแหน่ง');
+    var eMis    = eHdr.indexOf('กลุ่มภารกิจ');
+    var eDept   = eHdr.indexOf('กลุ่มงาน');
+    var eUpd    = eHdr.indexOf('อัปเดตล่าสุด');
+
+    var targetEmpRow = -1;
+    for (var j = 0; j < eData.length; j++) {
+      if (String(eData[j][eName >= 0 ? eName : 0] || '').trim() === fullName) {
+        targetEmpRow = j + 2;
+        break;
+      }
+    }
+
+    var now = new Date();
+    if (targetEmpRow > 0) {
+      if (eLine >= 0) empSheet.getRange(targetEmpRow, eLine + 1).setValue(lineId);
+      if (eStat >= 0) empSheet.getRange(targetEmpRow, eStat + 1).setValue(status);
+      if (eUpd  >= 0) empSheet.getRange(targetEmpRow, eUpd  + 1).setValue(now);
+    } else {
+      var newRow = new Array(Math.max(eHdr.length, 7)).fill('');
+      if (eName >= 0) newRow[eName] = fullName;
+      if (eLine >= 0) newRow[eLine] = lineId;
+      if (eStat >= 0) newRow[eStat] = status;
+      if (ePos  >= 0) newRow[ePos]  = String(data.position   || '').trim();
+      if (eMis  >= 0) newRow[eMis]  = String(data.mission    || '').trim();
+      if (eDept >= 0) newRow[eDept] = String(data.department || '').trim();
+      if (eUpd  >= 0) newRow[eUpd]  = now;
+      empSheet.appendRow(newRow);
+    }
+    SpreadsheetApp.flush();
+
+    Logger.log('✅ saveEmployeeLineData: ' + fullName + ' lineId=' + lineId + ' status=' + status);
+    return { success: true };
+  } catch (e) {
+    Logger.log('❌ saveEmployeeLineData: ' + e);
+    return { success: false, message: e.toString() };
+  }
+}
+// ============================================
+// === addManualEmployee(data, token) ===
+// เพิ่มพนักงานใหม่ที่ไม่มีข้อมูลในระบบ (อบรมกรณีพิเศษ)
+// ============================================
+function addManualEmployee(data, token) {
+  if (!verifyAdminToken(token)) {
+    return { success: false, message: 'ไม่มีสิทธิ์ดำเนินการ กรุณา Login ใหม่' };
+  }
+  try {
+    var ss       = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var fullName = String(data.fullName   || '').trim();
+    var lineId   = String(data.lineId     || '').trim();
+    var position = String(data.position   || '').trim();
+    var mission  = String(data.mission    || '').trim();
+    var dept     = String(data.department || '').trim();
+    var status   = String(data.status     || 'เปิดใช้งาน').trim();
+
+    if (!fullName) return { success: false, message: 'กรุณาระบุชื่อ-สกุล' };
+
+    // ── ตรวจสอบ/สร้าง Sheet "ข้อมูลพนักงาน" ──
+    var empSheet = ss.getSheetByName('ข้อมูลพนักงาน');
+    if (!empSheet) {
+      empSheet = ss.insertSheet('ข้อมูลพนักงาน');
+      var headers = ['ชื่อ-สกุล','LINE User ID','สถานะแจ้งเตือน','ตำแหน่ง','กลุ่มภารกิจ','กลุ่มงาน','อัปเดตล่าสุด'];
+      empSheet.getRange(1, 1, 1, headers.length)
+              .setValues([headers]).setFontWeight('bold')
+              .setBackground('#1e3a8a').setFontColor('#ffffff');
+      empSheet.setFrozenRows(1);
+    }
+
+    var eHdr = empSheet.getRange(1, 1, 1, empSheet.getLastColumn()).getValues()[0]
+                       .map(function(h) { return String(h || '').trim(); });
+    var eName = eHdr.indexOf('ชื่อ-สกุล');
+    var eLine = eHdr.indexOf('LINE User ID');
+    var eStat = eHdr.indexOf('สถานะแจ้งเตือน');
+    var ePos  = eHdr.indexOf('ตำแหน่ง');
+    var eMis  = eHdr.indexOf('กลุ่มภารกิจ');
+    var eDept = eHdr.indexOf('กลุ่มงาน');
+    var eUpd  = eHdr.indexOf('อัปเดตล่าสุด');
+
+    // ── เช็คซ้ำ ──
+    var eData = empSheet.getLastRow() > 1
+      ? empSheet.getRange(2, 1, empSheet.getLastRow() - 1, empSheet.getLastColumn()).getValues()
+      : [];
+
+    for (var j = 0; j < eData.length; j++) {
+      if (String(eData[j][eName >= 0 ? eName : 0] || '').trim() === fullName) {
+        var ur = j + 2;
+        if (eLine >= 0 && lineId)   empSheet.getRange(ur, eLine + 1).setValue(lineId);
+        if (eStat >= 0)             empSheet.getRange(ur, eStat + 1).setValue(status);
+        if (ePos  >= 0 && position) empSheet.getRange(ur, ePos  + 1).setValue(position);
+        if (eMis  >= 0 && mission)  empSheet.getRange(ur, eMis  + 1).setValue(mission);
+        if (eDept >= 0 && dept)     empSheet.getRange(ur, eDept + 1).setValue(dept);
+        if (eUpd  >= 0)             empSheet.getRange(ur, eUpd  + 1).setValue(new Date());
+        SpreadsheetApp.flush();
+        Logger.log('✅ addManualEmployee (อัปเดต): ' + fullName);
+        return { success: true, action: 'updated' };
+      }
+    }
+
+    // ── เพิ่มใหม่ ──
+    var newRow = new Array(Math.max(eHdr.length, 7)).fill('');
+    if (eName >= 0) newRow[eName] = fullName;
+    if (eLine >= 0) newRow[eLine] = lineId;
+    if (eStat >= 0) newRow[eStat] = status;
+    if (ePos  >= 0) newRow[ePos]  = position;
+    if (eMis  >= 0) newRow[eMis]  = mission;
+    if (eDept >= 0) newRow[eDept] = dept;
+    if (eUpd  >= 0) newRow[eUpd]  = new Date();
+    empSheet.appendRow(newRow);
+    SpreadsheetApp.flush();
+
+    // ── sync LINE ID ไปชีทอบรมฯ ถ้ามีชื่อตรงกัน ──
+    if (lineId) {
+      var trainSheet = ss.getSheetByName('อบรม ปีงบประมาณ 2569');
+      if (trainSheet && trainSheet.getLastRow() > 1) {
+        var tData = trainSheet.getDataRange().getValues();
+        var tHdr  = tData[0].map(function(h) { return String(h || '').trim(); });
+        var tName = tHdr.indexOf('ชื่อ-สกุล');
+        var tLine = tHdr.indexOf('LINE ID');
+        if (tName >= 0 && tLine >= 0) {
+          for (var k = 1; k < tData.length; k++) {
+            if (String(tData[k][tName] || '').trim() === fullName) {
+              trainSheet.getRange(k + 1, tLine + 1).setValue(lineId);
+            }
+          }
+          SpreadsheetApp.flush();
+        }
+      }
+    }
+
+    Logger.log('✅ addManualEmployee (เพิ่มใหม่): ' + fullName);
+    return { success: true, action: 'added' };
+  } catch (e) {
+    Logger.log('❌ addManualEmployee: ' + e);
+    return { success: false, message: e.toString() };
+  }
+}
+// ============================================
+// === 4. searchStaffByName(term) ===
+// ============================================
+function searchStaffByName(term) {
+  try {
+    if (!term || term.length < 2) return { success: true, data: [] };
+    var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName('Registrations');
+    if (!sheet || sheet.getLastRow() <= 1) return { success: true, data: [] };
+
+    var data      = sheet.getDataRange().getValues();
+    var hdr       = data[0].map(function(h) { return String(h || '').trim(); });
+    
+    var cName = getColIdx(hdr, 'Full Name', 'ชื่อ-สกุล', 4);
+    var cPos  = getColIdx(hdr, 'Position', 'ตำแหน่ง', 5);
+    var cMis  = getColIdx(hdr, 'Mission Group', 'กลุ่มภารกิจ', 6);
+    var cDept = getColIdx(hdr, 'Department', 'กลุ่มงาน', 7);
+    var termLower = term.toLowerCase();
+
+    var seen = {}, results = [];
+    for (var i = 1; i < data.length; i++) {
+      var name = String(data[i][cName] || '').trim();
+      if (!name || seen[name]) continue;
+      if (name.toLowerCase().indexOf(termLower) === -1) continue;
+      
+      seen[name] = true;
+      results.push({
+        fullName    : name,
+        position    : String(data[i][cPos]  || '').trim(),
+        missionGroup: String(data[i][cMis]  || '').trim(),
+        department  : String(data[i][cDept] || '').trim()
+      });
+      if (results.length >= 10) break;
+    }
+    return { success: true, data: results };
+  } catch (e) { return { success: false, message: e.toString() }; }
+}
+// ============================================
+// === 5. getPersonalData(name) ===
+// ============================================
+function getPersonalData(name) {
+  try {
+    if (!name) return { success: false, message: 'กรุณาระบุชื่อ' };
+    var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName('Registrations');
+    if (!sheet || sheet.getLastRow() <= 1) {
+      return { success: true, data: { summary: { totalRegistrations: 0, totalHours: 0 }, registrations: [] } };
+    }
+
+    var data  = sheet.getDataRange().getValues();
+    var hdr   = data[0].map(function(h) { return String(h || '').trim(); });
+    
+    var cName = getColIdx(hdr, 'Full Name', 'ชื่อ-สกุล', 4);
+    var cDate = getColIdx(hdr, 'Date', 'วันที่', 1);
+    var cEnd  = getColIdx(hdr, 'End Date', 'ถึงวันที่', 2);
+    var cTime = getColIdx(hdr, 'Time', 'เวลา', 3);
+    var cPos  = getColIdx(hdr, 'Position', 'ตำแหน่ง', 5);
+    var cMis  = getColIdx(hdr, 'Mission Group', 'กลุ่มภารกิจ', 6);
+    var cDept = getColIdx(hdr, 'Department', 'กลุ่มงาน', 7);
+    var cCat  = getColIdx(hdr, 'Category', 'หมวดหมู่', 8);
+    var cTopic= getColIdx(hdr, 'Topic', 'หัวข้อ/หลักสูตร', 9);
+    var cHrs  = getColIdx(hdr, 'Hours', 'จำนวนชั่วโมง', 10);
+    var cLoc  = getColIdx(hdr, 'Location', 'สถานที่', 13);
+    var cSum  = getColIdx(hdr, 'Summary', 'สรุป', 11);
+    var cSug  = getColIdx(hdr, 'Suggestion', 'ข้อเสนอแนะ', 12);
+    var cFN   = hdr.indexOf('ชื่อไฟล์แนบ');
+    var cFU   = hdr.indexOf('URL ไฟล์แนบ');
+
+    var nameLower = name.toLowerCase();
+    var results = [];
+    var totalHours = 0;
+
+    for (var i = 1; i < data.length; i++) {
+      var rowName = String(data[i][cName] || '').trim();
+      if (rowName.toLowerCase() !== nameLower) continue;
+
+      var hrs = parseFloat(data[i][cHrs]) || 0;
+      var rowCat = String(data[i][cCat] || '').trim();
+      if (rowCat !== NO_CREDIT_CAT) totalHours += hrs;
+
+      var d = data[i][cDate] instanceof Date ? data[i][cDate] : new Date(data[i][cDate]);
+      var dStr = isNaN(d.getTime()) ? '' : Utilities.formatDate(d, 'Asia/Bangkok', 'yyyy-MM-dd');
+      
+      var e = data[i][cEnd] instanceof Date ? data[i][cEnd] : new Date(data[i][cEnd]);
+      var eStr = isNaN(e.getTime()) ? '' : Utilities.formatDate(e, 'Asia/Bangkok', 'yyyy-MM-dd');
+
+      results.push({
+        fullName    : rowName,
+        date        : dStr,
+        endDate     : eStr,
+        time        : String(data[i][cTime] || '').trim(),
+        position    : String(data[i][cPos]  || '').trim(),
+        missionGroup: String(data[i][cMis]  || '').trim(),
+        department  : String(data[i][cDept] || '').trim(),
+        category    : String(data[i][cCat]  || '').trim(),
+        topic       : String(data[i][cTopic]|| '').trim(),
+        hours       : hrs,
+        location    : String(data[i][cLoc]  || '').trim(),
+        summary     : String(data[i][cSum]  || '').trim(),
+        suggestion  : String(data[i][cSug]  || '').trim(),
+        fileNames   : cFN !== -1 ? String(data[i][cFN] || '').trim() : '',
+        fileUrls    : cFU !== -1 ? String(data[i][cFU] || '').trim() : ''
+      });
+    }
+
+    return {
+      success: true,
+      data: {
+        summary: { fullName: name, totalRegistrations: results.length, totalHours: totalHours },
+        registrations: results
+      }
+    };
+  } catch (e) { return { success: false, message: e.toString() }; }
+}
+
+function getFilteredDashboard(year, month, missionGroup) {
+  try {
+    var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName('Registrations');
+    if (!sheet || sheet.getLastRow() <= 1) {
+      return { success: true, data: { summary: { numRegistrations: 0, totalHours: 0 }, registrations: [] } };
+    }
+
+    var data  = sheet.getDataRange().getValues();
+    var hdr   = data[0].map(function(h) { return String(h || '').trim(); });
+    
+    var cName = getColIdx(hdr, 'Full Name', 'ชื่อ-สกุล', 4);
+    var cDate = getColIdx(hdr, 'Date', 'วันที่', 1);
+    var cEnd  = getColIdx(hdr, 'End Date', 'ถึงวันที่', 2);
+    var cTime = getColIdx(hdr, 'Time', 'เวลา', 3);
+    var cPos  = getColIdx(hdr, 'Position', 'ตำแหน่ง', 5);
+    var cMis  = getColIdx(hdr, 'Mission Group', 'กลุ่มภารกิจ', 6);
+    var cDept = getColIdx(hdr, 'Department', 'กลุ่มงาน', 7);
+    var cCat  = getColIdx(hdr, 'Category', 'หมวดหมู่', 8);
+    var cTopic= getColIdx(hdr, 'Topic', 'หัวข้อ/หลักสูตร', 9);
+    var cHrs  = getColIdx(hdr, 'Hours', 'จำนวนชั่วโมง', 10);
+    var cLoc  = getColIdx(hdr, 'Location', 'สถานที่', 13);
+    var cFN   = hdr.indexOf('ชื่อไฟล์แนบ');
+    var cFU   = hdr.indexOf('URL ไฟล์แนบ');
+
+    var filterYear  = year  ? parseInt(year)  : 0;
+    var filterMonth = month ? parseInt(month) : 0;
+    var filterMis   = missionGroup ? String(missionGroup).trim() : '';
+
+    var results = [];
+    var totalHours = 0;
+
+    for (var i = 1; i < data.length; i++) {
+      var dateVal = data[i][cDate];
+      if (!dateVal) continue;
+      var d = dateVal instanceof Date ? dateVal : new Date(dateVal);
+      if (isNaN(d.getTime())) continue;
+
+      var rowYear  = d.getFullYear();
+      var rowMonth = d.getMonth() + 1;
+
+      if (filterYear  && rowYear  !== filterYear)  continue;
+      if (filterMonth && rowMonth !== filterMonth) continue;
+
+      var rowMis = String(data[i][cMis] || '').trim();
+      if (filterMis && rowMis !== filterMis) continue;
+
+      var hrs = parseFloat(data[i][cHrs]) || 0;
+      var rowCat = String(data[i][cCat] || '').trim();
+      if (rowCat !== NO_CREDIT_CAT) totalHours += hrs;
+
+      var e = data[i][cEnd] instanceof Date ? data[i][cEnd] : new Date(data[i][cEnd]);
+      var eStr = isNaN(e.getTime()) ? '' : Utilities.formatDate(e, 'Asia/Bangkok', 'yyyy-MM-dd');
+
+      results.push({
+        fullName    : String(data[i][cName]  || '').trim(),
+        date        : Utilities.formatDate(d, 'Asia/Bangkok', 'yyyy-MM-dd'),
+        endDate     : eStr,
+        time        : String(data[i][cTime]  || '').trim(),
+        position    : String(data[i][cPos]   || '').trim(),
+        missionGroup: rowMis,
+        department  : String(data[i][cDept]  || '').trim(),
+        category    : String(data[i][cCat]   || '').trim(),
+        topic       : String(data[i][cTopic] || '').trim(),
+        hours       : hrs,
+        location    : String(data[i][cLoc]   || '').trim(),
+        fileNames   : cFN !== -1 ? String(data[i][cFN] || '').trim() : '',
+        fileUrls    : cFU !== -1 ? String(data[i][cFU] || '').trim() : ''
+      });
+    }
+
+    return {
+      success: true,
+      data: {
+        summary      : { numRegistrations: results.length, totalHours: totalHours },
+        registrations: results
+      }
+    };
+  } catch (e) { return { success: false, message: e.toString() }; }
+}
+
+// ============================================
+// === 7. getSimpleDashboard() ===
+// ============================================
+function getSimpleDashboard() {
+  return getFilteredDashboard('', '', '');
+}
+
+// ============================================
+// === 8. getGroupSummary(groupName) ===
+// ============================================
+function getGroupSummary(groupName) {
+  try {
+    if (!groupName) return { success: false, message: 'กรุณาระบุกลุ่มภารกิจ' };
+    var result = getFilteredDashboard('', '', groupName);
+    if (!result.success) return result;
+    
+    return {
+      success: true,
+      data: {
+        summary: {
+          numRegistrations: result.data.summary.numRegistrations,
+          totalHours      : result.data.summary.totalHours
+        },
+        registrations: result.data.registrations
+      }
+    };
+  } catch (e) { return { success: false, message: e.toString() }; }
+}
+// ============================================
+// === 9. exportPersonalSelectedToWord(exportData) ===
+// สร้างไฟล์ Google Sheets สรุปรายการอบรมส่วนบุคคล (ใช้ SpreadsheetApp แทน DocumentApp)
+// ============================================
+function exportPersonalSelectedToWord(exportData) {
+  try {
+    if (!exportData || !exportData.summary || !exportData.registrations) {
+      return { success: false, message: 'ข้อมูลไม่ครบถ้วน' };
+    }
+
+    var s   = exportData.summary;
+    var reg = exportData.registrations;
+    var fileName = 'รายงานอบรม_' + (s.fullName || 'บุคลากร') + '_' +
+                   Utilities.formatDate(new Date(), 'Asia/Bangkok', 'ddMMyyyy');
+
+    var thaiMonths = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+    function fmtDateP(ds) {
+      if (!ds) return '-';
+      try {
+        var d = ds instanceof Date ? ds : new Date(ds);
+        if (isNaN(d.getTime())) return String(ds);
+        return d.getDate() + ' ' + thaiMonths[d.getMonth()] + ' ' + (d.getFullYear() + 543);
+      } catch(e) { return String(ds); }
+    }
+
+    // สร้าง Spreadsheet ใหม่
+    var ss   = SpreadsheetApp.create(fileName);
+    var sh   = ss.getActiveSheet();
+    sh.setName('รายงาน');
+
+    // ── หัว ──
+    sh.getRange('A1').setValue('รายงานสรุปการพัฒนาศักยภาพบุคลากร โรงพยาบาลสันทราย');
+    sh.getRange('A1').setFontSize(16).setFontWeight('bold').setHorizontalAlignment('center');
+    sh.getRange('A1:E1').merge();
+
+    sh.getRange('A2').setValue('ชื่อ-สกุล: ' + (s.fullName || '-'));
+    sh.getRange('A3').setValue('ตำแหน่ง: ' + (s.position || '-'));
+    sh.getRange('A4').setValue('กลุ่มภารกิจ: ' + (s.missionGroup || '-') + '   กลุ่มงาน: ' + (s.department || '-'));
+    sh.getRange('A5').setValue('จำนวนรายการที่เลือก: ' + reg.length + ' รายการ   รวม: ' + (s.totalHours || 0).toFixed(1) + ' ชั่วโมง');
+    sh.getRange('A2:E5').setFontSize(12);
+
+    // ── header ตาราง ──
+    var hdrRow = 7;
+    var headers = ['ลำดับ', 'หลักสูตร/เรื่อง', 'วันที่', 'สถานที่', 'ชม.'];
+    sh.getRange(hdrRow, 1, 1, 5).setValues([headers])
+      .setFontWeight('bold').setFontSize(12)
+      .setBackground('#1e3a8a').setFontColor('#ffffff')
+      .setHorizontalAlignment('center');
+
+    // ── ข้อมูล ──
+    var rows = [];
+    reg.forEach(function(r, idx) {
+      var hrsDisplay = String(r.hours || 0);
+      if (String(r.category || '').trim() === NO_CREDIT_CAT) hrsDisplay += ' *';
+      var dateStr = fmtDateP(r.date) + (r.endDate ? ' - ' + fmtDateP(r.endDate) : '');
+      rows.push([
+        idx + 1,
+        String(r.topic || '-'),
+        dateStr,
+        String(r.location || '-'),
+        hrsDisplay
+      ]);
+    });
+
+    if (rows.length > 0) {
+      sh.getRange(hdrRow + 1, 1, rows.length, 5).setValues(rows).setFontSize(12);
+      // zebra stripe
+      for (var ri = 0; ri < rows.length; ri++) {
+        if (ri % 2 === 1) {
+          sh.getRange(hdrRow + 1 + ri, 1, 1, 5).setBackground('#eff6ff');
+        }
+      }
+    }
+
+    // ── สรุป ──
+    var sumRow = hdrRow + rows.length + 2;
+    sh.getRange(sumRow, 1).setValue('รวมทั้งสิ้น ' + reg.length + ' รายการ   ' + (s.totalHours || 0).toFixed(1) + ' ชั่วโมง')
+      .setFontWeight('bold').setFontSize(12);
+    sh.getRange(sumRow, 1, 1, 5).merge();
+
+    sh.getRange(sumRow + 1, 1).setValue(
+      '* รายการที่มีเครื่องหมาย * คือ ประชุมคณะกรรมการ/คณะทำงาน/ประชุมชี้แจงฯ บันทึกชั่วโมงไว้เป็นหลักฐาน แต่ไม่นับรวมในหน่วยกิตสะสม'
+    ).setFontStyle('italic').setFontSize(11).setFontColor('#64748b');
+    sh.getRange(sumRow + 1, 1, 1, 5).merge();
+
+    // ── ลายเซ็น ──
+    var sigRow = sumRow + 3;
+    sh.getRange(sigRow, 1).setValue('(ลงชื่อ)....................................................');
+    sh.getRange(sigRow + 1, 1).setValue('     (' + (s.fullName || '...........................') + ')');
+    sh.getRange(sigRow + 2, 1).setValue('วันที่ ' + fmtDateP(new Date()));
+
+    // ── column width ──
+    sh.setColumnWidth(1, 60);
+    sh.setColumnWidth(2, 280);
+    sh.setColumnWidth(3, 130);
+    sh.setColumnWidth(4, 180);
+    sh.setColumnWidth(5, 60);
+
+    // ── เส้นขอบตาราง ──
+    if (rows.length > 0) {
+      sh.getRange(hdrRow, 1, rows.length + 1, 5)
+        .setBorder(true, true, true, true, true, true);
+    }
+
+    // ย้ายไปยัง ATTACHMENTS folder ถ้ากำหนดไว้
+    try {
+      var file = DriveApp.getFileById(ss.getId());
+      var folder = DriveApp.getFolderById(ATTACHMENTS_FOLDER_ID);
+      folder.addFile(file);
+      DriveApp.getRootFolder().removeFile(file);
+    } catch(fe) {
+      Logger.log('⚠️ ย้ายไฟล์ไป folder ไม่ได้ (ไม่ใช่ error หลัก): ' + fe.toString());
+    }
+
+    var url = ss.getUrl();
+    Logger.log('✅ exportPersonalSelectedToWord: ' + url);
+    return { success: true, url: url, id: ss.getId() };
+
+  } catch (e) {
+    Logger.log('❌ exportPersonalSelectedToWord: ' + e);
+    return { success: false, message: e.toString() };
+  }
+}
+
+// ============================================
+// === 10. exportDashboardToWord(year, month, missionGroup) ===
+// สร้างไฟล์ Google Sheets สรุปภาพรวม Dashboard (ใช้ SpreadsheetApp แทน DocumentApp)
+// ============================================
+function exportDashboardToWord(year, month, missionGroup) {
+  try {
+    var result = getFilteredDashboard(year, month, missionGroup);
+    if (!result.success) return result;
+
+    var reg  = result.data.registrations;
+    var summ = result.data.summary;
+
+    var titleParts = [];
+    if (year)         titleParts.push('ปี ' + (parseInt(year) + 543));
+    if (month)        titleParts.push('เดือน ' + month);
+    if (missionGroup) titleParts.push(missionGroup);
+    var titleStr = titleParts.length ? titleParts.join(' / ') : 'ทั้งหมด';
+
+    var fileName = 'สรุป Dashboard_' + titleStr + '_' +
+                   Utilities.formatDate(new Date(), 'Asia/Bangkok', 'ddMMyyyy');
+
+    // สร้าง Spreadsheet ใหม่
+    var ss = SpreadsheetApp.create(fileName);
+    var sh = ss.getActiveSheet();
+    sh.setName('Dashboard');
+
+    // ── หัว ──
+    sh.getRange('A1').setValue('รายงานสรุปการพัฒนาศักยภาพบุคลากร โรงพยาบาลสันทราย — ' + titleStr);
+    sh.getRange('A1').setFontSize(16).setFontWeight('bold').setHorizontalAlignment('center');
+    sh.getRange('A1:F1').merge();
+
+    sh.getRange('A2').setValue('จำนวนรายการทั้งหมด: ' + summ.numRegistrations + ' รายการ   รวมชั่วโมง: ' + (summ.totalHours || 0).toFixed(1) + ' ชั่วโมง');
+    sh.getRange('A2').setFontSize(12);
+    sh.getRange('A2:F2').merge();
+
+    if (reg.length === 0) {
+      sh.getRange('A4').setValue('ไม่พบข้อมูลตามเงื่อนไขที่กำหนด').setFontStyle('italic');
+    } else {
+      // สรุปรายบุคคล
+      var byPerson = {};
+      reg.forEach(function(r) {
+        var k = r.fullName;
+        if (!byPerson[k]) byPerson[k] = { name: k, position: r.position || '-', dept: r.department || '-', count: 0, hours: 0 };
+        byPerson[k].count++;
+        byPerson[k].hours += r.hours || 0;
+      });
+      var personList = Object.values(byPerson).sort(function(a, b) { return b.hours - a.hours; });
+
+      sh.getRange('A4').setValue('สรุปรายบุคคล (' + personList.length + ' คน)')
+        .setFontWeight('bold').setFontSize(14);
+      sh.getRange('A4:F4').merge();
+
+      var hdrRow = 5;
+      var headers = ['ลำดับ', 'ชื่อ-สกุล', 'ตำแหน่ง', 'กลุ่มงาน', 'จำนวนครั้ง', 'รวม ชม.'];
+      sh.getRange(hdrRow, 1, 1, 6).setValues([headers])
+        .setFontWeight('bold').setFontSize(12)
+        .setBackground('#1e3a8a').setFontColor('#ffffff')
+        .setHorizontalAlignment('center');
+
+      var pRows = personList.map(function(p, i) {
+        return [i + 1, p.name, p.position, p.dept, p.count, parseFloat(p.hours.toFixed(1))];
+      });
+
+      sh.getRange(hdrRow + 1, 1, pRows.length, 6).setValues(pRows).setFontSize(12);
+
+      // zebra stripe
+      for (var ri = 0; ri < pRows.length; ri++) {
+        if (ri % 2 === 1) sh.getRange(hdrRow + 1 + ri, 1, 1, 6).setBackground('#eff6ff');
+      }
+
+      // เส้นขอบ
+      sh.getRange(hdrRow, 1, pRows.length + 1, 6).setBorder(true, true, true, true, true, true);
+
+      // column width
+      sh.setColumnWidth(1, 60);
+      sh.setColumnWidth(2, 220);
+      sh.setColumnWidth(3, 180);
+      sh.setColumnWidth(4, 180);
+      sh.setColumnWidth(5, 90);
+      sh.setColumnWidth(6, 80);
+
+      // ── sheet 2: รายละเอียดทั้งหมด ──
+      var sh2 = ss.insertSheet('รายละเอียด');
+      var h2 = ['ลำดับ', 'ชื่อ-สกุล', 'ตำแหน่ง', 'กลุ่มงาน', 'หลักสูตร/เรื่อง', 'วันที่', 'ถึงวันที่', 'สถานที่', 'ชม.', 'ประเภท'];
+      sh2.getRange(1, 1, 1, h2.length).setValues([h2])
+        .setFontWeight('bold').setFontSize(12)
+        .setBackground('#1e3a8a').setFontColor('#ffffff')
+        .setHorizontalAlignment('center');
+
+      var thaiM = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+      function fmtD2(ds) {
+        if (!ds) return '-';
+        try { var d = ds instanceof Date ? ds : new Date(ds);
+          if (isNaN(d.getTime())) return String(ds);
+          return d.getDate() + ' ' + thaiM[d.getMonth()] + ' ' + (d.getFullYear() + 543); } catch(e) { return '-'; }
+      }
+      var d2Rows = reg.map(function(r, i) {
+        return [i + 1, r.fullName || '-', r.position || '-', r.department || '-',
+                r.topic || '-', fmtD2(r.date), fmtD2(r.endDate), r.location || '-',
+                r.hours || 0, r.category || '-'];
+      });
+      if (d2Rows.length > 0) {
+        sh2.getRange(2, 1, d2Rows.length, h2.length).setValues(d2Rows).setFontSize(11);
+      }
+      sh2.autoResizeColumns(1, h2.length);
+    }
+
+    // timestamp
+    var lastRow = sh.getLastRow() + 2;
+    sh.getRange(lastRow, 1).setValue('พิมพ์เมื่อ: ' +
+      Utilities.formatDate(new Date(), 'Asia/Bangkok', 'dd/MM/yyyy HH:mm') + ' น.')
+      .setFontStyle('italic').setFontSize(11).setFontColor('#64748b');
+
+    // ย้ายไปยัง ATTACHMENTS folder ถ้ากำหนดไว้
+    try {
+      var file = DriveApp.getFileById(ss.getId());
+      var folder = DriveApp.getFolderById(ATTACHMENTS_FOLDER_ID);
+      folder.addFile(file);
+      DriveApp.getRootFolder().removeFile(file);
+    } catch(fe) {
+      Logger.log('⚠️ ย้ายไฟล์ไป folder ไม่ได้ (ไม่ใช่ error หลัก): ' + fe.toString());
+    }
+
+    var url = ss.getUrl();
+    Logger.log('✅ exportDashboardToWord: ' + url);
+    return { success: true, url: url, id: ss.getId() };
+
+  } catch (e) {
+    Logger.log('❌ exportDashboardToWord: ' + e);
+    return { success: false, message: e.toString() };
+  }
+}
+/**
+ * รับ password จาก client → คืน session token ถ้าถูก
+ * Token = HMAC-like string ที่มีอายุ 8 ชั่วโมง
+ * Client เก็บ token ใน sessionStorage แล้วส่งมาทุกครั้งที่เรียก Admin function
+ */
+function adminLogin(password) {
+  if (!password || password !== getAdminPassword()) {
+    return { success: false, message: 'รหัสผ่านไม่ถูกต้อง' };
+  }
+  // สร้าง token = hash ของ (password + วันชั่วโมงปัจจุบัน)
+  // GAS ไม่มี crypto โดยตรง ใช้ Utilities.computeDigest แทน
+  var now      = new Date();
+  var hourSlot = now.getFullYear() + '-' + now.getMonth() + '-' + now.getDate() + '-' + now.getHours();
+  var raw      = getAdminPassword() + '|' + hourSlot;
+  var bytes    = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, raw);
+  var token    = bytes.map(function(b) {
+    return ('0' + (b & 0xff).toString(16)).slice(-2);
+  }).join('').substring(0, 32);
+
+  return { success: true, token: token };
+}
+
+/**
+ * ตรวจสอบ token ที่ client ส่งมา
+ * คืน true/false — ใช้ก่อนทุก Admin-only function
+ */
+function verifyAdminToken(token) {
+  if (!token) return false;
+  // คำนวณ token ของ slot ปัจจุบัน
+  var now      = new Date();
+  var hourSlot = now.getFullYear() + '-' + now.getMonth() + '-' + now.getDate() + '-' + now.getHours();
+  var raw      = getAdminPassword() + '|' + hourSlot;
+  var bytes    = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, raw);
+  var expected = bytes.map(function(b) {
+    return ('0' + (b & 0xff).toString(16)).slice(-2);
+  }).join('').substring(0, 32);
+
+  if (token === expected) return true;
+
+  // ยอมรับ token ของ slot ก่อนหน้า 1 ชั่วโมง (กันกรณีเปลี่ยนชั่วโมงพอดี)
+  var prev     = new Date(now.getTime() - 3600000);
+  var prevSlot = prev.getFullYear() + '-' + prev.getMonth() + '-' + prev.getDate() + '-' + prev.getHours();
+  var rawPrev  = getAdminPassword() + '|' + prevSlot;
+  var bytesPrev = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, rawPrev);
+  var expectedPrev = bytesPrev.map(function(b) {
+    return ('0' + (b & 0xff).toString(16)).slice(-2);
+  }).join('').substring(0, 32);
+
+  return token === expectedPrev;
+}
+
+function verifyAdminTokenPrevHour(token) {
+  // alias — SHA-256 verifyAdminToken already checks prev hour slot internally
+  return verifyAdminToken(token);
+}
+
+function getLogoImage() {
+  var fileId = '1qIREbhnqt9n4xWbdqe5V8lnypb4DKtVS';
+  var file = DriveApp.getFileById(fileId);
+  var blob = file.getBlob();
+  var base64 = Utilities.base64Encode(blob.getBytes());
+  var mimeType = blob.getContentType();
+  return 'data:' + mimeType + ';base64,' + base64;
+}
+
+// ============================================
+// === Sheet Management ===
+// ============================================
+
+function getOrCreateSheet() {
+  try {
+    var spreadsheet;
+    if (SPREADSHEET_ID) {
+      spreadsheet = SpreadsheetApp.openById(SPREADSHEET_ID);
+    } else {
+      spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    }
+    if (!spreadsheet) {
+      throw new Error('ไม่พบ Spreadsheet — ตรวจสอบ SPREADSHEET_ID ในโค้ด');
+    }
+    setupSheets(spreadsheet);
+    return spreadsheet;
+  } catch (error) {
+    console.error('Error in getOrCreateSheet:', error.toString());
+    throw new Error('ไม่สามารถเข้าถึง Spreadsheet ได้: ' + error.toString());
+  }
+}
+
+/**
+ * setupSheets — สร้าง/ตรวจสอบ Sheet ที่จำเป็นทั้งหมด
+ * รับ spreadsheet object โดยตรง หรือเรียกโดยไม่ส่ง parameter
+ * (ในกรณีรัน manual จาก Apps Script editor)
+ */
+function setupSheets(spreadsheet) {
+  try {
+    // ถ้าเรียกโดยไม่ส่ง parameter (เช่น รันเอง) ให้ดึง spreadsheet เอง
+    if (!spreadsheet || typeof spreadsheet.getSheetByName !== 'function') {
+      if (SPREADSHEET_ID) {
+        spreadsheet = SpreadsheetApp.openById(SPREADSHEET_ID);
+      } else {
+        spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+      }
+    }
+    if (!spreadsheet) {
+      throw new Error('ไม่พบ Spreadsheet — ตรวจสอบ SPREADSHEET_ID');
+    }
+    var registrationsSheet = spreadsheet.getSheetByName('Registrations');
+    if (!registrationsSheet) {
+      registrationsSheet = spreadsheet.insertSheet('Registrations');
+      var headers = [
+        'Timestamp', 'Date', 'End Date', 'Time', 'Full Name', 'Position',
+        'Mission Group', 'Department', 'Category', 'Topic', 'Hours',
+        'Summary', 'Suggestion', 'Location', 'LINE User ID',
+        'ชื่อไฟล์แนบ', 'URL ไฟล์แนบ'
+      ];
+      registrationsSheet.getRange(1, 1, 1, 17).setValues([headers]).setFontWeight('bold');
+    } else {
+      // ถ้า Sheet มีอยู่แล้ว ตรวจว่ามีคอลัมน์ที่ต้องการหรือยัง
+      var existingHeaders = registrationsSheet.getRange(1, 1, 1, registrationsSheet.getLastColumn()).getValues()[0];
+      if (existingHeaders.indexOf('LINE User ID') === -1) {
+        var nextCol = registrationsSheet.getLastColumn() + 1;
+        registrationsSheet.getRange(1, nextCol).setValue('LINE User ID').setFontWeight('bold');
+        Logger.log('✅ เพิ่มคอลัมน์ LINE User ID ใน Registrations');
+        existingHeaders = registrationsSheet.getRange(1, 1, 1, registrationsSheet.getLastColumn()).getValues()[0];
+      }
+      if (existingHeaders.indexOf('ชื่อไฟล์แนบ') === -1) {
+        var nextColA = registrationsSheet.getLastColumn() + 1;
+        registrationsSheet.getRange(1, nextColA).setValue('ชื่อไฟล์แนบ').setFontWeight('bold');
+        Logger.log('✅ เพิ่มคอลัมน์ ชื่อไฟล์แนบ ใน Registrations');
+        existingHeaders = registrationsSheet.getRange(1, 1, 1, registrationsSheet.getLastColumn()).getValues()[0];
+      }
+      if (existingHeaders.indexOf('URL ไฟล์แนบ') === -1) {
+        var nextColB = registrationsSheet.getLastColumn() + 1;
+        registrationsSheet.getRange(1, nextColB).setValue('URL ไฟล์แนบ').setFontWeight('bold');
+        Logger.log('✅ เพิ่มคอลัมน์ URL ไฟล์แนบ ใน Registrations');
+      }
+    }
+
+    registrationsSheet.getRange('B2:B').setNumberFormat('dd/mm/yyyy');
+    registrationsSheet.getRange('C2:C').setNumberFormat('dd/mm/yyyy');
+
+    // Sheet: ข้อมูลพนักงาน (สำหรับ LINE Messaging API)
+    var employeeSheet = spreadsheet.getSheetByName('ข้อมูลพนักงาน');
+    if (!employeeSheet) {
+      employeeSheet = spreadsheet.insertSheet('ข้อมูลพนักงาน');
+      var empHeaders = [
+        'รหัสพนักงาน', 'ชื่อ-สกุล', 'ตำแหน่ง', 'ระดับ', 'กลุ่มภารกิจ',
+        'กลุ่มงาน', 'เบอร์โทร', 'อีเมล', 'LINE User ID',
+        'สถานะแจ้งเตือน', 'วันที่อัปเดต', 'หมายเหตุ'
+      ];
+      employeeSheet.getRange(1, 1, 1, 12).setValues([empHeaders]).setFontWeight('bold');
+    }
+
+    // Sheet: ตั้งค่าระบบ
+    var configSheet = spreadsheet.getSheetByName('ตั้งค่าระบบ');
+    if (!configSheet) {
+      configSheet = spreadsheet.insertSheet('ตั้งค่าระบบ');
+      var configHeaders = ['หัวข้อการตั้งค่า', 'ค่าที่ตั้ง', 'คำอธิบาย'];
+      configSheet.getRange(1, 1, 1, 3).setValues([configHeaders]).setFontWeight('bold');
+
+      var configData = [
+        ['แจ้งเตือนก่อนอบรม (วัน)', '7',  'แจ้งเตือนก่อนอบรม N วัน'],
+        ['แจ้งเตือนหลังอบรม (วัน)', '7',  'เตือนส่งเอกสารสรุปผล หลังอบรมเสร็จ N วัน'],
+        ['เวลาส่งแจ้งเตือน (ชั่วโมง)', '8', 'ชั่วโมงที่ส่งแจ้งเตือน (0-23) เช่น 8 = 08:00'],
+        ['ชื่อโรงพยาบาล', 'โรงพยาบาลสันทราย', ''],
+        ['ปีงบประมาณปัจจุบัน', '2568', ''],
+        ['LINE Channel Access Token', '', 'วางค่า Channel Access Token จาก LINE Developers Console'],
+        ['Google Drive Folder ID', '', 'ID ของโฟลเดอร์ที่ต้องการเก็บเอกสาร Word (ไม่บังคับ)']
+      ];
+      configSheet.getRange(2, 1, configData.length, 3).setValues(configData);
+    }
+
+    // Sheet: Log การแจ้งเตือน
+    var logSheet = spreadsheet.getSheetByName('Log_การแจ้งเตือน');
+    if (!logSheet) {
+      logSheet = spreadsheet.insertSheet('Log_การแจ้งเตือน');
+      var logHeaders = ['วันที่', 'เวลา', 'ประเภทแจ้งเตือน', 'ผู้รับ', 'หลักสูตร', 'สถานะ', 'Response Code', 'ข้อความ Error'];
+      logSheet.getRange(1, 1, 1, 8).setValues([logHeaders]).setFontWeight('bold');
+    }
+
+    // ลบ Sheet1 ถ้ามี
+    var defaultSheet = spreadsheet.getSheetByName('Sheet1');
+    if (defaultSheet && spreadsheet.getSheets().length > 1) {
+      spreadsheet.deleteSheet(defaultSheet);
+    }
+  } catch (error) {
+    Logger.log('Error in setupSheets: ' + error.toString());
+    throw error;
+  }
+}
+
+// ============================================
+// === PART 1: ระบบลงทะเบียน ===
+// ============================================
+
+function saveRegistration(data, files) {
+  try {
+    if (!data || !data.date || !data.fullName || !data.position || !data.missionGroup ||
+        !data.department || !data.category || !data.topic || !data.hours ||
+        !data.location || !data.time) {
+      return { success: false, message: 'ข้อมูลไม่ครบถ้วน' };
+    }
+
+    var spreadsheet = getOrCreateSheet();
+    var sheet = spreadsheet.getSheetByName('Registrations');
+    var hours = parseFloat(data.hours);
+
+    if (isNaN(hours) || hours <= 0) {
+      return { success: false, message: 'จำนวนชั่วโมงไม่ถูกต้อง (ต้องมากกว่า 0)' };
+    }
+
+    var dateParts = data.date.split('-');
+    var year  = parseInt(dateParts[0], 10);
+    var month = parseInt(dateParts[1], 10) - 1;
+    var day   = parseInt(dateParts[2], 10);
+    var utcDate = new Date(Date.UTC(year, month, day));
+
+    var endDateParts = data.endDate ? data.endDate.split('-') : null;
+    var utcEndDate   = null;
+    if (endDateParts && endDateParts.length === 3) {
+      utcEndDate = new Date(Date.UTC(
+        parseInt(endDateParts[0], 10),
+        parseInt(endDateParts[1], 10) - 1,
+        parseInt(endDateParts[2], 10)
+      ));
+    }
+
+    if (utcEndDate && utcEndDate < utcDate) {
+      return { success: false, message: 'วันที่สิ้นสุดต้องมากกว่าหรือเท่ากับวันที่เริ่มต้น' };
+    }
+
+    var lineUserId = String(data.lineUserId || '').trim();
+
+    // อัพโหลดไฟล์แนบก่อน เพื่อได้ URL สำหรับบันทึกลง Sheet พร้อมกัน
+    var attachResults = [];
+    var fileNames = '';
+    var fileUrls  = '';
+    if (files && files.length > 0) {
+      try {
+        attachResults = saveFilesToDrive(files);
+        var okFiles2 = attachResults.filter(function(r) { return r && r.url; });
+        fileNames = attachResults.map(function(r) { return r.name; }).join(', ');
+        fileUrls  = okFiles2.map(function(r) { return r.url; }).join('\n');
+        Logger.log('✅ อัพโหลดไฟล์แนบ register: ' + okFiles2.length + '/' + attachResults.length + ' ไฟล์');
+      } catch(uploadErr) {
+        Logger.log('⚠️ อัพโหลดไฟล์แนบล้มเหลว: ' + uploadErr.toString());
+      }
+    }
+
+    // บันทึกลง Registrations (17 คอลัมน์ รวม LINE User ID + ไฟล์แนบ)
+    var newRow = [
+      new Date(),
+      utcDate,
+      utcEndDate,
+      String(data.time).trim(),
+      String(data.fullName).trim(),
+      String(data.position).trim(),
+      String(data.missionGroup).trim(),
+      String(data.department).trim(),
+      String(data.category).trim(),
+      String(data.topic).trim(),
+      hours,
+      String(data.summary    || '').trim(),
+      String(data.suggestion || '').trim(),
+      String(data.location   || '').trim(),
+      lineUserId,
+      fileNames,
+      fileUrls
+    ];
+
+    sheet.appendRow(newRow);
+
+    // ถ้ามี URL ไฟล์แนบ → ใส่เป็น HYPERLINK ในคอลัมน์ URL ไฟล์แนบ
+    if (fileUrls) {
+      var lastRow = sheet.getLastRow();
+      var hdr2 = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+      var urlColIdx = hdr2.indexOf('URL ไฟล์แนบ');
+      if (urlColIdx !== -1) {
+        var urlList = fileUrls.split('\n').filter(function(u) { return u.trim(); });
+        if (urlList.length === 1) {
+          var fname = fileNames.split(',')[0].trim();
+          sheet.getRange(lastRow, urlColIdx + 1).setFormula(
+            '=HYPERLINK("' + urlList[0] + '","' + fname + '")'
+          );
+        } else {
+          // หลายไฟล์ → ใส่ plain text URL ทั้งหมด (Sheet ไม่รองรับ multi-hyperlink ใน cell เดียว)
+          sheet.getRange(lastRow, urlColIdx + 1).setValue(fileUrls);
+        }
+      }
+    }
+
+    SpreadsheetApp.flush();
+
+    // ถ้าผู้ลงทะเบียนกรอก LINE User ID → upsert ลง Sheet ข้อมูลพนักงาน ด้วย
+    if (lineUserId) {
+      saveEmployeeLineData({
+        fullName   : String(data.fullName).trim(),
+        lineId     : lineUserId,
+        status     : 'เปิดใช้งาน',
+        position   : String(data.position    || '').trim(),
+        mission    : String(data.missionGroup || '').trim(),
+        department : String(data.department  || '').trim(),
+        _internal  : true   // ← bypass admin token check
+      }, null);
+    }
+
+    var wordResult = createSingleRegistrationWord(data);
+
+    var okFiles = attachResults.filter(function(r) { return r && r.url; });
+    return {
+      success    : true,
+      message    : 'บันทึกข้อมูลเรียบร้อยแล้ว',
+      wordDoc    : wordResult.success ? { url: wordResult.url, id: wordResult.id } : null,
+      attachFiles: okFiles,
+      fileNames  : fileNames,
+      fileUrls   : fileUrls
+    };
+  } catch (error) {
+    Logger.log('Error in saveRegistration: ' + error.toString());
+    return { success: false, message: 'เกิดข้อผิดพลาด: ' + error.toString() };
+  }
+}
+
+function createSingleRegistrationWord(data) {
+  try {
+    var fileName = 'สรุปรายงานผล_' + data.fullName + '_' + formatDateForFileName(data.date);
+
+    // สร้าง Spreadsheet แทน DocumentApp (ไม่ต้องการ scope documents)
+    var ss   = SpreadsheetApp.create(fileName);
+    var sh   = ss.getActiveSheet();
+    sh.setName('บันทึกข้อความ');
+
+    // ── หัว ──
+    sh.getRange('A1').setValue('บันทึกข้อความ');
+    sh.getRange('A1').setFontSize(18).setFontWeight('bold').setHorizontalAlignment('center');
+    sh.getRange('A1:B1').merge();
+
+    sh.getRange('A2').setValue('ส่วนราชการ  กลุ่มงาน' + data.department + ' โรงพยาบาลสันทราย');
+    sh.getRange('A2:B2').merge().setFontSize(13);
+
+    sh.getRange('A3').setValue('ที่ ชม................./                                           วันที่ ' + formatDateThaiLong(data.date));
+    sh.getRange('A3:B3').merge().setFontSize(13);
+
+    sh.getRange('A4').setValue('เรื่อง  สรุปรายงานผลการเข้าร่วมประชุม/ อบรม/ สัมมนา');
+    sh.getRange('A4:B4').merge().setFontSize(13);
+
+    sh.getRange('A5').setValue('เรียน  ผู้อำนวยการโรงพยาบาลสันทราย (ผ่านหัวหน้ากลุ่มงาน/รองผู้อำนวยการกลุ่มภารกิจ)');
+    sh.getRange('A5:B5').merge().setFontSize(13);
+
+    var content = '      ข้าพเจ้า ' + data.fullName + ' ตำแหน่ง' + data.position +
+                  ' ได้เข้าร่วม' + data.category.toLowerCase() + ' ' + data.topic +
+                  ' ระหว่างวันที่ ' + formatThaiDate(data.date) + ' ' +
+                  (data.endDate ? 'ถึง ' + formatThaiDate(data.endDate) : '') +
+                  ' เวลา ' + data.time + ' น. ณ ' + data.location +
+                  ' เสร็จเรียบร้อยแล้วนั้น ในการนี้จึงขอสรุปผลการเข้าร่วมประชุม/อบรม/สัมมนา ดังนี้';
+    sh.getRange('A6').setValue(content);
+    sh.getRange('A6:B6').merge().setFontSize(13).setWrap(true);
+
+    sh.getRange('A7').setValue('1. สรุปสาระสำคัญ').setFontWeight('bold').setFontSize(13);
+    sh.getRange('A7:B7').merge();
+    sh.getRange('A8').setValue('      ' + (data.summary || '(ไม่มีข้อมูลสรุป)'));
+    sh.getRange('A8:B8').merge().setFontSize(13).setWrap(true);
+
+    sh.getRange('A9').setValue('2. ข้อคิดเห็น/ ข้อเสนอแนะ/ ข้อที่จะนำมาปฏิบัติ').setFontWeight('bold').setFontSize(13);
+    sh.getRange('A9:B9').merge();
+    sh.getRange('A10').setValue('      ' + (data.suggestion || '(ไม่มีข้อมูลเพิ่มเติม)'));
+    sh.getRange('A10:B10').merge().setFontSize(13).setWrap(true);
+
+    sh.getRange('A11').setValue('3. งบประมาณที่ใช้ในการประชุม/ อบรม/ สัมมนา/ ศึกษาดูงานครั้งนี้').setFontWeight('bold').setFontSize(13);
+    sh.getRange('A11:B11').merge();
+
+    var budgetLines = [
+      ['(  ) ไม่ใช้งบประมาณ'],
+      ['(  ) เงินบำรุงโรงพยาบาลสันทราย'],
+      ['      · ค่าลงทะเบียน                                   บาท'],
+      ['      · ค่าเบี้ยเลี้ยง                                         บาท'],
+      ['      · ค่าที่พัก                                                 บาท'],
+      ['      · ค่าพาหนะเดินทาง                            บาท'],
+      ['      · อื่น ๆ                                                      บาท'],
+      ['      · รวมทั้งสิ้น                                              บาท'],
+      ['(  ) งบประมาณแหล่งอื่นๆ จาก...................................................................จำนวน          บาท'],
+      ['(  ) จากผู้จัด'],
+      ['(  ) ไม่ประสงค์จะขอเบิกเงิน']
+    ];
+    var budgetStart = 12;
+    budgetLines.forEach(function(line, i) {
+      var r = sh.getRange(budgetStart + i, 1);
+      r.setValue(line[0]).setFontSize(13);
+      sh.getRange(budgetStart + i, 1, 1, 2).merge();
+    });
+
+    var sigStart = budgetStart + budgetLines.length + 2;
+    sh.getRange(sigStart, 1).setValue('(ลงชื่อ)....................................................').setFontSize(13);
+    sh.getRange(sigStart, 1, 1, 2).merge();
+    sh.getRange(sigStart + 1, 1).setValue('     (' + data.fullName + ')').setFontSize(13);
+    sh.getRange(sigStart + 1, 1, 1, 2).merge();
+    sh.getRange(sigStart + 2, 1).setValue('ผู้เข้าร่วมอบรม').setFontSize(13);
+    sh.getRange(sigStart + 2, 1, 1, 2).merge();
+
+    sh.getRange(sigStart + 4, 1).setValue('(ลงชื่อ)................................................…').setFontSize(13);
+    sh.getRange(sigStart + 4, 1, 1, 2).merge();
+    sh.getRange(sigStart + 5, 1).setValue('     (..........................................)').setFontSize(13);
+    sh.getRange(sigStart + 5, 1, 1, 2).merge();
+    sh.getRange(sigStart + 6, 1).setValue('หัวหน้ากลุ่มงาน').setFontSize(13);
+    sh.getRange(sigStart + 6, 1, 1, 2).merge();
+
+    sh.getRange(sigStart + 8, 1).setValue('(ลงชื่อ).....................………....................').setFontSize(13);
+    sh.getRange(sigStart + 8, 1, 1, 2).merge();
+    sh.getRange(sigStart + 9, 1).setValue('     (...................................)').setFontSize(13);
+    sh.getRange(sigStart + 9, 1, 1, 2).merge();
+    sh.getRange(sigStart + 10, 1).setValue('รองผู้อำนวยการ..................').setFontSize(13);
+    sh.getRange(sigStart + 10, 1, 1, 2).merge();
+
+    sh.getRange(sigStart + 12, 1).setValue('(ลงชื่อ)...................................................').setFontSize(13);
+    sh.getRange(sigStart + 12, 1, 1, 2).merge();
+    sh.getRange(sigStart + 13, 1).setValue('     (นายวรวุฒิ   โฆวัชรกุล)').setFontSize(13);
+    sh.getRange(sigStart + 13, 1, 1, 2).merge();
+    sh.getRange(sigStart + 14, 1).setValue('ผู้อำนวยการโรงพยาบาลสันทราย').setFontSize(13);
+    sh.getRange(sigStart + 14, 1, 1, 2).merge();
+
+    // column width
+    sh.setColumnWidth(1, 600);
+    sh.setColumnWidth(2, 200);
+
+    // row heights for wrapped text
+    sh.setRowHeight(6, 80);
+    sh.setRowHeight(8, 60);
+    sh.setRowHeight(10, 60);
+
+    // ย้ายไปยัง ATTACHMENTS folder ถ้ากำหนดไว้
+    try {
+      var file = DriveApp.getFileById(ss.getId());
+      var folder = DriveApp.getFolderById(ATTACHMENTS_FOLDER_ID);
+      folder.addFile(file);
+      DriveApp.getRootFolder().removeFile(file);
+    } catch(fe) {
+      Logger.log('⚠️ ย้ายไฟล์ไป folder ไม่ได้ (ไม่ใช่ error หลัก): ' + fe.toString());
+    }
+
+    return {
+      success: true,
+      url: ss.getUrl(),
+      id: ss.getId(),
+      message: 'สร้างเอกสารสำเร็จ'
+    };
+
+  } catch (error) {
+    Logger.log('Error in createSingleRegistrationWord: ' + error.toString());
+    return { success: false, message: 'เกิดข้อผิดพลาด: ' + error.toString() };
+  }
+}
+
+function addWatermark(body) {
+  // ฟังก์ชันนี้เคยใช้กับ DocumentApp แต่ปัจจุบันเปลี่ยนไปใช้ SpreadsheetApp แล้ว
+  // คงไว้เพื่อ backward compatibility ไม่ทำงานและไม่ throw error
+  try {
+    Logger.log('ℹ️ addWatermark: ข้ามเนื่องจากใช้ SpreadsheetApp แล้ว');
+  } catch (error) {
+    Logger.log('Error in addWatermark: ' + error.toString());
+  }
+}
+
+// ============================================
+// === Date Formatting Functions ===
+// ============================================
+
+function formatDateForFileName(dateStr) {
+  try {
+    var date = new Date(dateStr);
+    var day = String(date.getDate()).padStart(2, '0');
+    var month = String(date.getMonth() + 1).padStart(2, '0');
+    var year = date.getFullYear();
+    return day + month + year;
+  } catch (error) {
+    Logger.log('Error in formatDateForFileName: ' + error.toString());
+    return '';
+  }
+}
+
+function formatThaiDate(dateStr) {
+  if (!dateStr) return '';
+  try {
+    var date = new Date(dateStr);
+    var day = date.getDate();
+    var month = date.getMonth();
+    var year = date.getFullYear() + 543;
+    var thaiMonths = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+                      'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+    return day + ' ' + thaiMonths[month] + ' ' + year;
+  } catch (error) {
+    Logger.log('Error in formatThaiDate: ' + error.toString());
+    return '';
+  }
+}
+
+function formatDateThaiLong(dateStr) {
+  if (!dateStr) return '';
+  try {
+    var date = new Date(dateStr);
+    var day = date.getDate();
+    var month = date.getMonth();
+    var year = date.getFullYear() + 543;
+    var thaiMonths = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+                      'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+    return day + ' ' + thaiMonths[month] + ' ' + year;
+  } catch (error) {
+    Logger.log('Error in formatDateThaiLong: ' + error.toString());
+    return '';
+  }
+}
+
+function formatDateThaiShort(date) {
+  try {
+    var day = String(date.getDate()).padStart(2, '0');
+    var month = String(date.getMonth() + 1).padStart(2, '0');
+    var year = date.getFullYear() + 543;
+    return day + '/' + month + '/' + year;
+  } catch (error) {
+    Logger.log('Error in formatDateThaiShort: ' + error.toString());
+    return '';
+  }
+}
+
+
+// ============================================================
+// === PART 2: LINE Messaging API — ระบบแจ้งเตือน HRD ===
+// ============================================================
+//
+// วิธีใช้ครั้งแรก (ทำตามลำดับ):
+//   STEP 1 → รัน LINE_setup()       ตรวจสอบ Token + Bot info
+//   STEP 2 → User add Bot → Bot ตอบ User ID กลับใน LINE
+//   STEP 3 → Admin ผูก User ID กับชื่อพนักงานในหน้าเว็บ (แท็บพนักงาน)
+//   STEP 4 → รัน LINE_sendTest()    ทดสอบส่งจริง
+//   STEP 5 → รัน LINE_setTrigger()  ตั้งส่งอัตโนมัติทุกวัน
+//
+// กรณีที่จะส่งข้อความ LINE:
+//   1. อัตโนมัติ (Trigger) — ครบกำหนด LINE_AFTER_DAYS วันหลังอบรม + ยังไม่ส่งสรุป
+//      → ส่งซ้ำทุกวันจนกว่าจะมีสรุป (ใช้ >= ไม่ใช่ == เพื่อไม่พลาด)
+//   2. Admin กดส่งด้วยตนเอง จากหน้าเว็บ (sendDocReminderManual)
+//   3. User add Bot → Bot ตอบ User ID กลับอัตโนมัติ (doPost Webhook)
+//   4. ทดสอบ (LINE_sendTest) — รันจาก Script Editor
+// ============================================================
+
+// ── ค่าคงที่ LINE (ปรับได้ที่นี่) ─────────────────────────
+var LINE_AFTER_DAYS   = 7;   // ส่งแจ้งเตือนเมื่อผ่านมา >= N วันหลังสิ้นสุดอบรม
+var LINE_NOTIFY_HOUR  = 8;   // เวลาที่ Trigger ทำงาน (8 = 08:00 น.)
+var LINE_TEST_USER_ID = 'U9174b59332c4a96bbcfd9a79fb1579c5'; // User ID สำหรับทดสอบ
+
+// URL ของ Web App (ใส่ใน Flex Message)
+var APP_URL = 'https://script.google.com/macros/s/AKfycbwtnfYjlEAloUtZt5cvblr_6hUAgaVx4hYzff86RmkjjDRgGFbIM_43jnJnFkIn4eq8eQ/exec';
+
+// ─────────────────────────────────────────────────────────
+
+// ============================================================
+// === _getLineToken() — ดึง Channel Access Token จาก Sheet ===
+// ============================================================
+function _getLineToken() {
+  try {
+    var ss  = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var cfg = ss.getSheetByName('ตั้งค่าระบบ');
+    if (!cfg) {
+      Logger.log('⚠️ _getLineToken: ไม่พบ Sheet "ตั้งค่าระบบ"');
+      return '';
+    }
+    var rows = cfg.getDataRange().getValues();
+    for (var i = 0; i < rows.length; i++) {
+      if (String(rows[i][0]).trim() === 'LINE Channel Access Token') {
+        var t = String(rows[i][1]).trim();
+        if (!t) Logger.log('⚠️ _getLineToken: พบแถวแต่ค่าว่าง — กรุณาใส่ Token');
+        return t;
+      }
+    }
+    Logger.log('⚠️ _getLineToken: ไม่พบแถว "LINE Channel Access Token" ใน Sheet ตั้งค่าระบบ');
+  } catch(e) {
+    Logger.log('❌ _getLineToken error: ' + e);
+  }
+  return '';
+}
+
+// ============================================================
+// === _linePush(userId, messageObj) — ส่ง Push Message ===
+// คืน { ok:bool, code:int, body:string }
+// ============================================================
+function _linePush(userId, messageObj) {
+  var token  = _getLineToken();
+  var result = { ok: false, code: 0, body: '' };
+
+  if (!token) {
+    result.body = 'ไม่พบ Channel Access Token — กรุณาใส่ใน Sheet "ตั้งค่าระบบ"';
+    Logger.log('❌ _linePush: ' + result.body);
+    return result;
+  }
+  if (!userId || !/^U[0-9a-f]{32}$/i.test(userId)) {
+    result.body = 'LINE User ID ไม่ถูกรูปแบบ: "' + userId + '"';
+    Logger.log('❌ _linePush: ' + result.body);
+    return result;
+  }
+
+  try {
+    var res = UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
+      method            : 'post',
+      contentType       : 'application/json',
+      headers           : { 'Authorization': 'Bearer ' + token },
+      payload           : JSON.stringify({ to: userId, messages: [messageObj] }),
+      muteHttpExceptions: true
+    });
+    result.code = res.getResponseCode();
+    result.body = res.getContentText();
+    result.ok   = (result.code === 200);
+
+    if (!result.ok) {
+      Logger.log('❌ LINE Push HTTP ' + result.code + ': ' + result.body.substring(0, 200));
+      if (result.code === 400) Logger.log('   → User ยังไม่ได้ add Bot หรือ User ID ผิด');
+      if (result.code === 401) Logger.log('   → Token ผิดหรือหมดอายุ');
+      if (result.code === 429) Logger.log('   → Rate limit — ลองใหม่ในอีกสักครู่');
+    }
+  } catch(e) {
+    result.body = e.toString();
+    Logger.log('❌ _linePush exception: ' + e);
+  }
+  return result;
+}
+
+// ============================================================
+// === _lineReply(replyToken, messageObj) — ตอบกลับ Webhook ===
+// ============================================================
+function _lineReply(replyToken, messageObj) {
+  var token = _getLineToken();
+  if (!token || !replyToken) return;
+  try {
+    UrlFetchApp.fetch('https://api.line.me/v2/bot/message/reply', {
+      method            : 'post',
+      contentType       : 'application/json',
+      headers           : { 'Authorization': 'Bearer ' + token },
+      payload           : JSON.stringify({ replyToken: replyToken, messages: [messageObj] }),
+      muteHttpExceptions: true
+    });
+  } catch(e) {
+    Logger.log('❌ _lineReply error: ' + e);
+  }
+}
+
+// ============================================================
+// === _findEmpLineId(name, empSheet) — ค้นหา LINE User ID ===
+// คืน User ID ถ้าสถานะแจ้งเตือน = "เปิดใช้งาน" มิฉะนั้นคืน ''
+// ============================================================
+function _findEmpLineId(name, empSheet) {
+  try {
+    var d  = empSheet.getDataRange().getValues();
+    var h  = d[0];
+    var nc = h.indexOf('ชื่อ-สกุล');
+    var lc = h.indexOf('LINE User ID');
+    var sc = h.indexOf('สถานะแจ้งเตือน');
+    if (nc < 0 || lc < 0) return '';
+    for (var i = 1; i < d.length; i++) {
+      if (String(d[i][nc] || '').trim() === name) {
+        var st = sc >= 0 ? String(d[i][sc] || '').trim() : 'เปิดใช้งาน';
+        if (st !== 'เปิดใช้งาน') return ''; // ปิดแจ้งเตือน
+        return String(d[i][lc] || '').trim();
+      }
+    }
+  } catch(e) {
+    Logger.log('❌ _findEmpLineId error: ' + e);
+  }
+  return '';
+}
+
+// ============================================================
+// === _writeLineLog() — บันทึก Log การส่ง LINE ===
+// ============================================================
+function _writeLineLog(logSheet, type, name, topic, result) {
+  if (!logSheet) return;
+  try {
+    var now = new Date();
+    logSheet.appendRow([
+      Utilities.formatDate(now, 'Asia/Bangkok', 'dd/MM/yyyy'),
+      Utilities.formatDate(now, 'Asia/Bangkok', 'HH:mm:ss'),
+      type,
+      name,
+      (topic || '').substring(0, 100),
+      result.ok ? 'ส่งแล้ว' : 'ส่งไม่สำเร็จ',
+      result.code,
+      result.ok ? '' : (result.body || '').substring(0, 200)
+    ]);
+  } catch(e) {
+    Logger.log('⚠️ _writeLineLog error: ' + e);
+  }
+}
+
+// ============================================================
+// === doPost — Webhook รับ Event จาก LINE ===
+// เมื่อ User add Bot → ตอบ User ID กลับทันที
+// ============================================================
+function doPost(e) {
+  var out = ContentService
+    .createTextOutput(JSON.stringify({ status: 'ok' }))
+    .setMimeType(ContentService.MimeType.JSON);
+  try {
+    var body   = JSON.parse(e.postData.contents);
+    var events = body.events || [];
+    events.forEach(function(ev) {
+      if (!ev.source || !ev.source.userId) return;
+      Logger.log('📥 Webhook: type=' + ev.type + ' userId=' + ev.source.userId);
+
+      // ตอบเฉพาะ follow event (User add Bot ครั้งแรก)
+      if (ev.type !== 'follow') return;
+
+      if (ev.replyToken) {
+        _lineReply(ev.replyToken, {
+          type: 'text',
+          text: '🏥 ระบบแจ้งเตือน HRD โรงพยาบาลสันทราย\n' +
+                '━━━━━━━━━━━━━━━━━━━━\n' +
+                '🆔 LINE User ID ของคุณ:\n' +
+                ev.source.userId + '\n' +
+                '━━━━━━━━━━━━━━━━━━━━\n' +
+                '📝 กรุณาแจ้ง User ID นี้ให้เจ้าหน้าที่ HRD\n' +
+                'เพื่อลงทะเบียนรับการแจ้งเตือนในระบบ\n' +
+                '━━━━━━━━━━━━━━━━━━━━\n' +
+                'ขอบคุณที่ใช้บริการ 🙏'
+        });
+        Logger.log('✅ ตอบ User ID กลับ follow event: ' + ev.source.userId);
+      }
+    });
+  } catch(err) {
+    Logger.log('❌ doPost error: ' + err);
+  }
+  return out;
+}
+
+// ============================================================
+// === _buildDocReminderMsg() — Flex Message แจ้งส่งเอกสาร ===
+// ใช้กับทั้ง Trigger อัตโนมัติ และ Admin กดส่งเอง
+// ============================================================
+function _buildDocReminderMsg(name, records) {
+  // records = array ของ { topic, endDate, daysAfter }
+  // ถ้าส่งมาแค่ 1 record ก็ยังใช้ได้
+
+  var itemContents = [];
+  records.forEach(function(r, idx) {
+    if (idx > 0) itemContents.push({ type: 'separator', margin: 'sm' });
+    itemContents.push({
+      type: 'box', layout: 'vertical',
+      paddingAll: '10px', backgroundColor: '#fffbeb', cornerRadius: '6px',
+      contents: [
+        {
+          type: 'box', layout: 'baseline', spacing: 'sm',
+          contents: [
+            { type: 'text', text: (idx + 1) + '.', size: 'sm', color: '#d97706', weight: 'bold', flex: 0 },
+            { type: 'text', text: r.topic || 'การอบรม/ประชุม', size: 'sm', wrap: true, color: '#1e293b', weight: 'bold', flex: 5 }
+          ]
+        },
+        {
+          type: 'text',
+          text: '📅 สิ้นสุด ' + _fmtDateTh(r.endDate) + '  (ครบกำหนดมา ' + r.daysAfter + ' วัน)',
+          size: 'xs', color: '#64748b', margin: 'xs', wrap: true
+        }
+      ]
+    });
+  });
+
+  var countText = records.length > 1
+    ? 'รายการที่ยังไม่ส่งสรุป (' + records.length + ' รายการ)'
+    : 'รายการที่ยังไม่ส่งสรุป';
+
+  return {
+    type    : 'flex',
+    altText : '⚠️ [HRD] ' + name + ' กรุณาส่งสรุปอบรม ' + records.length + ' รายการ',
+    contents: {
+      type: 'bubble', size: 'mega',
+      header: {
+        type: 'box', layout: 'vertical',
+        backgroundColor: '#d97706', paddingAll: '18px',
+        contents: [
+          { type: 'text', text: '⚠️ แจ้งเตือนส่งสรุปอบรม',
+            color: '#ffffff', size: 'lg', weight: 'bold' },
+          { type: 'text', text: 'ครบ ' + LINE_AFTER_DAYS + ' วันหลังสิ้นสุดอบรม',
+            color: '#fef3c7', size: 'sm', margin: 'sm' }
+        ]
+      },
+      body: {
+        type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '18px',
+        contents: [
+          {
+            type: 'box', layout: 'baseline', spacing: 'sm',
+            contents: [
+              { type: 'text', text: '👤', size: 'sm', flex: 0 },
+              { type: 'text', text: name, size: 'sm', weight: 'bold', wrap: true, flex: 5 }
+            ]
+          },
+          { type: 'separator', margin: 'md' },
+          { type: 'text', text: countText,
+            size: 'sm', weight: 'bold', color: '#1e293b', margin: 'md' }
+        ].concat(itemContents).concat([
+          { type: 'separator', margin: 'md' },
+          { type: 'text',
+            text: '📎 กรอกสรุปผลได้ที่ลิ้งค์ด้านล่าง',
+            size: 'xs', color: '#059669', wrap: true, weight: 'bold', margin: 'md' },
+          { type: 'text', text: APP_URL,
+            size: 'xxs', color: '#2563eb', wrap: true, decoration: 'underline',
+            action: { type: 'uri', label: 'เปิดลิ้งค์', uri: APP_URL } }
+        ])
+      },
+      footer: {
+        type: 'box', layout: 'vertical', paddingAll: '12px',
+        contents: [
+          { type: 'text', text: 'กรุณาดำเนินการโดยเร็ว ขอบคุณค่ะ 🙏',
+            size: 'xs', color: '#d97706', align: 'center' },
+          { type: 'text',
+            text: 'ส่งโดย HRD | ' + Utilities.formatDate(new Date(), 'Asia/Bangkok', 'dd/MM/yyyy') + ' น.',
+            size: 'xxs', color: '#9ca3af', align: 'center', margin: 'xs' }
+        ]
+      }
+    }
+  };
+}
+
+// ============================================================
+// === dailyNotificationCheck() — Trigger รายวัน (รวมระบบเดียว) ===
+//
+// ตรวจสอบทั้ง 2 Sheet แล้วส่ง 1 ข้อความต่อคน (รวมทุกรายการค้าง)
+// เงื่อนไข: daysAfter >= LINE_AFTER_DAYS AND Summary ว่าง AND มี LINE ID
+// ============================================================
+function dailyNotificationCheck() {
+  Logger.log('══════════════════════════════════════════════');
+  Logger.log('  dailyNotificationCheck START ' +
+             Utilities.formatDate(new Date(), 'Asia/Bangkok', 'dd/MM/yyyy HH:mm'));
+  Logger.log('══════════════════════════════════════════════');
+
+  var token = _getLineToken();
+  if (!token) {
+    Logger.log('❌ ไม่พบ Channel Access Token — หยุดทำงาน');
+    return;
+  }
+
+  // ── ดึงรายการที่ครบ LINE_AFTER_DAYS วันพอดี ──────────────
+  var result = getFollowupStatus(LINE_AFTER_DAYS);
+  if (!result.success) {
+    Logger.log('❌ getFollowupStatus: ' + result.message);
+    return;
+  }
+
+  var pending = result.pending;
+  if (pending.length === 0) {
+    Logger.log('✅ ไม่มีรายการที่ครบ ' + LINE_AFTER_DAYS + ' วันวันนี้ — ไม่ส่ง LINE');
+    return;
+  }
+
+  Logger.log('📋 พบรายการที่ครบ 7 วัน: ' + pending.length + ' รายการ จาก ' + _countUniqueNames(pending) + ' คน');
+
+  var ss     = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var empSh  = ss.getSheetByName('ข้อมูลพนักงาน');
+  var logSh  = ss.getSheetByName('Log_การแจ้งเตือน');
+  var sent = 0, skipped = 0;
+
+  // จัดกลุ่มตามชื่อ เพื่อส่ง 1 ข้อความต่อคน
+  var byName = {};
+  pending.forEach(function(r) {
+    if (!byName[r.name]) byName[r.name] = [];
+    byName[r.name].push(r);
+  });
+
+  Object.keys(byName).forEach(function(name) {
+    var records = byName[name];
+
+    // ค้นหา LINE User ID
+    var uid = '';
+    if (empSh) uid = _findEmpLineId(name, empSh);
+    if (!uid) {
+      Logger.log('⚠️ ไม่พบ LINE ID หรือปิดแจ้งเตือน: ' + name);
+      skipped++;
+      // บันทึก log ว่าข้ามไป
+      _writeLineLog(logSh, 'อัตโนมัติ-ไม่มี LINE ID',
+        name, records.map(function(r){return r.topic;}).join(', '),
+        { ok: false, code: 0, body: 'ไม่พบ LINE User ID ในระบบ' });
+      return;
+    }
+
+    var msg    = _buildDocReminderMsg(name, records);
+    var result2 = _linePush(uid, msg);
+
+    Logger.log((result2.ok ? '✅' : '❌') + ' → ' + name +
+               ' (' + records.length + ' รายการ) HTTP ' + result2.code);
+    if (result2.ok) sent++;
+
+    // บันทึก log ทุก record
+    records.forEach(function(rec) {
+      _writeLineLog(logSh, 'อัตโนมัติ-แจ้งเตือนครั้งเดียว', name, rec.topic, result2);
+    });
+  });
+
+  if (logSh) SpreadsheetApp.flush();
+
+  Logger.log('══════════════════════════════════════════════');
+  Logger.log('  dailyNotificationCheck DONE:');
+  Logger.log('  ส่งสำเร็จ=' + sent + ' คน | ข้าม=' + skipped + ' คน');
+  Logger.log('══════════════════════════════════════════════');
+}
+
+function _countUniqueNames(arr) {
+  var seen = {};
+  arr.forEach(function(r) { seen[r.name] = true; });
+  return Object.keys(seen).length;
+}
+
+// ============================================================
+// === getFollowupStatus(afterDays) — ตรวจสถานะรายการค้าง ===
+// คืน { success, pending[], notFound[], checkedAt }
+// ============================================================
+function getFollowupStatus(afterDays) {
+  afterDays = (typeof afterDays === 'number') ? afterDays : LINE_AFTER_DAYS;
+
+  try {
+    var ss      = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var trainSh = ss.getSheetByName('อบรม ปีงบประมาณ 2569');
+    var regSh   = ss.getSheetByName('Registrations');
+
+    if (!trainSh) return { success: false, message: 'ไม่พบ Sheet "อบรม ปีงบประมาณ 2569"' };
+    if (!regSh)   return { success: false, message: 'ไม่พบ Sheet "Registrations"' };
+
+    var today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // ── อ่าน Registrations ──
+    var regData = regSh.getDataRange().getValues();
+    var regHdr  = regData[0].map(function(h) { return String(h || '').trim(); });
+    var rColName    = getColIdx(regHdr, 'Full Name',  'ชื่อ-สกุล',       4);
+    var rColTopic   = getColIdx(regHdr, 'Topic',      'หัวข้อ/หลักสูตร', 9);
+    // หมายเหตุ: ไม่เช็ค Summary — ส่งแจ้งเตือนทุกคนที่ครบกำหนด ไม่ว่าจะส่งสรุปหรือยัง
+
+    // ── อ่าน อบรม ปีงบประมาณ 2569 ──
+    var trainData = trainSh.getDataRange().getValues();
+    var trainHdr  = trainData[0].map(function(h) { return String(h || '').trim(); });
+    var trainHdrNorm = trainHdr.map(function(h) {
+      return (HEADER_ALIASES && HEADER_ALIASES[h]) ? HEADER_ALIASES[h] : h;
+    });
+
+    var tColName  = _findCol(trainHdrNorm, trainHdr, ['ชื่อ-สกุล','ชื่อ สกุล','ชื่อ','Full Name']);
+    var tColTopic = _findCol(trainHdrNorm, trainHdr, ['เรื่อง/หลักสูตร','หลักสูตร','เรื่อง','Topic']);
+    var tColEnd   = _findCol(trainHdrNorm, trainHdr, ['วันที่สิ้นสุด','ถึงวันที่','End Date']);
+    var tColStart = _findCol(trainHdrNorm, trainHdr, ['วันที่เริ่ม','วันที่','Date']);
+
+    if (tColName  < 0) return { success: false, message: 'ไม่พบคอลัมน์ "ชื่อ-สกุล" ใน Sheet อบรมฯ' };
+    if (tColTopic < 0) return { success: false, message: 'ไม่พบคอลัมน์ "เรื่อง/หลักสูตร" ใน Sheet อบรมฯ' };
+    if (tColEnd   < 0) return { success: false, message: 'ไม่พบคอลัมน์ "วันที่สิ้นสุด" ใน Sheet อบรมฯ' };
+
+    var pending  = [];
+    var notFound = [];
+
+    for (var ti = 1; ti < trainData.length; ti++) {
+      var tRow   = trainData[ti];
+      var tName  = String(tRow[tColName]  || '').trim();
+      var tTopic = String(tRow[tColTopic] || '').trim();
+      if (!tName || !tTopic) continue;
+
+      // ตรวจวันที่สิ้นสุด
+      var endRaw = tRow[tColEnd];
+      if (!endRaw) continue;
+      var endDate = endRaw instanceof Date ? new Date(endRaw) : new Date(endRaw);
+      if (isNaN(endDate.getTime())) continue;
+      endDate.setHours(0, 0, 0, 0);
+
+      var daysAfterN = Math.round((today - endDate) / 86400000);
+      if (daysAfterN !== afterDays) continue; // ส่งเฉพาะวันที่ครบกำหนดพอดี
+
+      var endDateStr   = Utilities.formatDate(endDate, 'Asia/Bangkok', 'yyyy-MM-dd');
+      var startDateStr = '';
+      if (tColStart >= 0 && tRow[tColStart]) {
+        var sd = tRow[tColStart] instanceof Date ? tRow[tColStart] : new Date(tRow[tColStart]);
+        if (!isNaN(sd.getTime()))
+          startDateStr = Utilities.formatDate(sd, 'Asia/Bangkok', 'yyyy-MM-dd');
+      }
+
+      // ค้นหาใน Registrations (เช็คแค่ ชื่อ + เรื่อง — ไม่สนใจ Summary)
+      var matchRowIdx = -1;
+      var tNameLower  = tName.toLowerCase();
+      var tTopicLower = tTopic.toLowerCase();
+
+      for (var ri = 1; ri < regData.length; ri++) {
+        var rName  = String(regData[ri][rColName]  || '').trim().toLowerCase();
+        var rTopic = String(regData[ri][rColTopic] || '').trim().toLowerCase();
+        if (rName === tNameLower && rTopic === tTopicLower) {
+          matchRowIdx = ri;
+          break;
+        }
+      }
+
+      var record = {
+        trainRowIdx : ti + 1,
+        name        : tName,
+        topic       : tTopic,
+        startDate   : startDateStr,
+        endDate     : endDateStr,
+        daysAfter   : daysAfterN,
+        regRowIdx   : matchRowIdx > 0 ? matchRowIdx + 1 : null
+      };
+
+      // ทุก record ที่ครบกำหนด → pending (ส่งแจ้งเตือน) ไม่ว่าจะลงทะเบียนใน Reg แล้วหรือยัง
+      if (matchRowIdx < 0) {
+        notFound.push(record); // หาใน Registrations ไม่เจอ (log ไว้เท่านั้น)
+      } else {
+        pending.push(record);  // พบใน Registrations → แจ้งเตือน
+      }
+    }
+
+    Logger.log('✅ getFollowupStatus: pending=' + pending.length +
+               ' | notFound=' + notFound.length);
+
+    return {
+      success   : true,
+      pending   : pending,
+      notFound  : notFound,
+      checkedAt : Utilities.formatDate(new Date(), 'Asia/Bangkok', 'dd/MM/yyyy HH:mm')
+    };
+
+  } catch(e) {
+    Logger.log('❌ getFollowupStatus: ' + e);
+    return { success: false, message: e.toString() };
+  }
+}
+
+// ============================================================
+// === getFollowupPendingReport(token, afterDays) — เรียกจาก Admin ===
+// ============================================================
+function getFollowupPendingReport(token, afterDays) {
+  if (!verifyAdminToken(token) && !verifyAdminTokenPrevHour(token)) {
+    return { success: false, message: 'ไม่มีสิทธิ์ กรุณา Login ใหม่' };
+  }
+  return getFollowupStatus(afterDays || LINE_AFTER_DAYS);
+}
+
+// ============================================================
+// === sendDocReminderManual(payload, token) — Admin กดส่งเอง ===
+// ============================================================
+function sendDocReminderManual(payload, token) {
+  if (!verifyAdminToken(token)) {
+    return { success: false, message: 'ไม่มีสิทธิ์ กรุณา Login ใหม่' };
+  }
+  try {
+    if (!payload || !payload.lineId || !payload.fullName) {
+      return { success: false, message: 'ข้อมูลไม่ครบ (lineId / fullName)' };
+    }
+
+    var lineId   = String(payload.lineId   || '').trim();
+    var fullName = String(payload.fullName || '').trim();
+
+    if (!/^U[0-9a-f]{32}$/i.test(lineId)) {
+      return { success: false,
+               message: 'LINE User ID ไม่ถูกรูปแบบ: ' + lineId +
+                        '\nUser ID ต้องขึ้นต้นด้วย U ตามด้วยตัวอักษร/ตัวเลข 32 ตัว' };
+    }
+
+    // ดึงหลักสูตรล่าสุดของพนักงาน (ใช้สำหรับ Flex Message)
+    var latestCourse = _getLatestCourse(fullName);
+    var records = [{
+      topic    : latestCourse || payload.course || 'การอบรม/ประชุม',
+      endDate  : payload.endDate || '',
+      daysAfter: payload.daysAfter || 0
+    }];
+
+    var flexMsg = _buildDocReminderMsg(fullName, records);
+    var result  = _linePush(lineId, flexMsg);
+
+    // บันทึก Log
+    var logSh = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('Log_การแจ้งเตือน');
+    records.forEach(function(rec) {
+      _writeLineLog(logSh, 'Admin-แจ้งส่งสรุปด้วยตนเอง', fullName, rec.topic, result);
+    });
+    if (logSh) SpreadsheetApp.flush();
+
+    Logger.log((result.ok ? '✅' : '❌') + ' sendDocReminderManual → ' + fullName + ' HTTP ' + result.code);
+    if (!result.ok) {
+      return { success: false,
+               message: 'LINE API ตอบกลับ HTTP ' + result.code + ': ' + result.body.substring(0, 150) };
+    }
+    return { success: true };
+
+  } catch(e) {
+    Logger.log('❌ sendDocReminderManual ERROR: ' + e);
+    return { success: false, message: e.toString() };
+  }
+}
+
+// helper: ดึงหลักสูตรล่าสุดของพนักงาน
+function _getLatestCourse(fullName) {
+  try {
+    var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName(TRAINING_REQUEST_SHEET);
+    if (!sheet || sheet.getLastRow() <= 1) return '';
+    var data  = sheet.getDataRange().getValues();
+    var hdr   = data[0].map(function(h) { return String(h || '').trim(); });
+    var cName  = hdr.indexOf('ชื่อ-สกุล');
+    var cTopic = hdr.indexOf('เรื่อง/หลักสูตร');
+    var cTs    = hdr.indexOf('Timestamp');
+    var best = null, bestTs = 0;
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][cName] || '').trim() !== fullName) continue;
+      var ts = (data[i][cTs] instanceof Date) ? data[i][cTs].getTime()
+             : (data[i][cTs] ? new Date(data[i][cTs]).getTime() : 0);
+      if (ts > bestTs) { bestTs = ts; best = data[i]; }
+    }
+    return best && cTopic >= 0 ? String(best[cTopic] || '').trim() : '';
+  } catch(e) { return ''; }
+}
+
+// ============================================================
+// === LINE Trigger Setup Functions ===
+// ============================================================
+
+/** ตั้ง Trigger รายวัน (รันครั้งเดียวพอ) */
+function LINE_setTrigger() {
+  // ลบ trigger เดิมทุกตัวที่เกี่ยวกับ LINE ก่อน (ป้องกันซ้ำ)
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    var fn = t.getHandlerFunction();
+    if (fn === 'dailyNotificationCheck' || fn === 'dailyFollowupCheck') {
+      ScriptApp.deleteTrigger(t);
+    }
+  });
+  ScriptApp.newTrigger('dailyNotificationCheck')
+    .timeBased().atHour(LINE_NOTIFY_HOUR).everyDays(1).inTimezone('Asia/Bangkok').create();
+  Logger.log('✅ Trigger ตั้งแล้ว — dailyNotificationCheck ทุกวัน ' + LINE_NOTIFY_HOUR + ':00 น.');
+  Logger.log('   (ยกเลิก trigger เก่าทั้งหมดที่ซ้ำกันแล้ว)');
+}
+
+/** ยกเลิก Trigger */
+function LINE_removeTrigger() {
+  var n = 0;
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    var fn = t.getHandlerFunction();
+    if (fn === 'dailyNotificationCheck' || fn === 'dailyFollowupCheck') {
+      ScriptApp.deleteTrigger(t); n++;
+    }
+  });
+  Logger.log('✅ ลบ Trigger แล้ว ' + n + ' รายการ');
+}
+
+// ============================================================
+// === LINE_setup() — STEP 1: ตรวจสอบระบบ ===
+// ============================================================
+function LINE_setup() {
+  Logger.log('══════════════════════════════════════════════');
+  Logger.log('  LINE System — Setup Check');
+  Logger.log('══════════════════════════════════════════════');
+
+  var token = _getLineToken();
+  if (!token) {
+    Logger.log('❌ TOKEN: ไม่พบ');
+    Logger.log('   → เปิด Sheet "ตั้งค่าระบบ" แล้วใส่ Channel Access Token');
+    Logger.log('   → ได้จาก LINE Developers Console > Channel > Messaging API > Channel access token');
+    return;
+  }
+  Logger.log('✅ TOKEN: พบแล้ว (' + token.length + ' ตัวอักษร)');
+
+  var res = UrlFetchApp.fetch('https://api.line.me/v2/bot/info', {
+    method: 'get',
+    headers: { 'Authorization': 'Bearer ' + token },
+    muteHttpExceptions: true
+  });
+  if (res.getResponseCode() !== 200) {
+    Logger.log('❌ BOT INFO: HTTP ' + res.getResponseCode() + ' — Token ผิดหรือหมดอายุ');
+    return;
+  }
+  var bot = JSON.parse(res.getContentText());
+  Logger.log('✅ BOT: ' + bot.displayName + ' (@' + (bot.basicId || '?') + ')');
+  Logger.log('   chatMode: ' + bot.chatMode +
+             (bot.chatMode === 'bot' ? ' ✅' : ' ⚠️ ต้องเปลี่ยนเป็น "bot mode" ใน LINE Developers'));
+
+  var url = '';
+  try { url = ScriptApp.getService().getUrl(); } catch(e) {}
+  Logger.log(url ? '✅ Webhook URL: ' + url : '⚠️ ยังไม่ได้ Deploy Web App');
+
+  Logger.log('──────────────────────────────────────────────');
+  Logger.log('ขั้นต่อไป:');
+  Logger.log('  1. User ส่งข้อความหา Bot (ครั้งแรก) → Bot ตอบ User ID');
+  Logger.log('  2. Admin ผูก User ID กับชื่อพนักงานในหน้าเว็บ');
+  Logger.log('  3. รัน LINE_sendTest() เพื่อทดสอบส่งจริง');
+  Logger.log('  4. รัน LINE_setTrigger() เพื่อเปิดอัตโนมัติ');
+  Logger.log('══════════════════════════════════════════════');
+}
+
+// ============================================================
+// === LINE_sendTest() — STEP 4: ทดสอบส่งข้อความจริง ===
+// ============================================================
+function LINE_sendTest() {
+  if (!LINE_TEST_USER_ID) {
+    Logger.log('❌ ยังไม่ได้ใส่ LINE_TEST_USER_ID ในโค้ด'); return;
+  }
+  Logger.log('กำลังส่งทดสอบ → ' + LINE_TEST_USER_ID);
+  var r = _linePush(LINE_TEST_USER_ID, {
+    type: 'flex',
+    altText: '✅ ทดสอบระบบแจ้งเตือน HRD สันทราย',
+    contents: {
+      type: 'bubble',
+      header: {
+        type: 'box', layout: 'vertical', backgroundColor: '#059669', paddingAll: '16px',
+        contents: [{
+          type: 'text', text: '✅ ระบบแจ้งเตือน HRD พร้อมแล้ว!',
+          color: '#ffffff', size: 'lg', weight: 'bold'
+        }]
+      },
+      body: {
+        type: 'box', layout: 'vertical', paddingAll: '16px',
+        contents: [
+          { type: 'text', text: 'โรงพยาบาลสันทราย', size: 'md', weight: 'bold' },
+          { type: 'text', text: 'ระบบแจ้งเตือนการอบรม HRD ทำงานปกติ 🎉',
+            size: 'sm', color: '#666666', margin: 'sm' },
+          { type: 'text',
+            text: 'ทดสอบเมื่อ ' + Utilities.formatDate(new Date(), 'Asia/Bangkok', 'dd/MM/yyyy HH:mm') + ' น.',
+            size: 'xs', color: '#94a3b8', margin: 'sm' }
+        ]
+      }
+    }
+  });
+  if (r.ok) {
+    Logger.log('✅ ส่งสำเร็จ! HTTP 200 — ระบบพร้อมใช้งาน');
+    Logger.log('   → รัน LINE_setTrigger() เพื่อเปิดส่งอัตโนมัติ');
+  } else {
+    Logger.log('❌ HTTP ' + r.code + ': ' + r.body);
+    if (r.code === 400) Logger.log('   → User ยังไม่ได้ add Bot หรือ User ID ผิด');
+    if (r.code === 401) Logger.log('   → Token ผิดหรือหมดอายุ');
+  }
+}
+
+// ============================================================
+// === testFollowupStatus() — ดูรายงานใน Logger โดยไม่ส่ง LINE ===
+// ============================================================
+function testFollowupStatus() {
+  var result = getFollowupStatus(LINE_AFTER_DAYS);
+  if (!result.success) { Logger.log('❌ ' + result.message); return; }
+
+  Logger.log('══════════════════════════════════════════════════');
+  Logger.log('  รายงานติดตามสรุปอบรม ณ ' + result.checkedAt);
+  Logger.log('  เกณฑ์: ครบกำหนด ' + LINE_AFTER_DAYS + ' วันพอดีหลังสิ้นสุด (ส่งครั้งเดียว)');
+  Logger.log('══════════════════════════════════════════════════');
+
+  Logger.log('\n📋  รายการที่ครบ ' + LINE_AFTER_DAYS + ' วัน (แจ้งเตือนวันนี้): ' + result.pending.length + ' รายการ');
+  result.pending.forEach(function(r, i) {
+    Logger.log('  ' + (i+1) + '. [Train แถว ' + r.trainRowIdx + ']');
+    Logger.log('     ชื่อ   : ' + r.name);
+    Logger.log('     เรื่อง : ' + r.topic);
+    Logger.log('     สิ้นสุด: ' + r.endDate + '  (ค้างมา ' + r.daysAfter + ' วัน)');
+  });
+
+  Logger.log('\n❓  หาใน Registrations ไม่เจอ: ' + result.notFound.length + ' รายการ');
+  result.notFound.forEach(function(r, i) {
+    Logger.log('  ' + (i+1) + '. ' + r.name + ' | ' + r.topic +
+               '  (Train แถว ' + r.trainRowIdx + ')');
+  });
+  Logger.log('══════════════════════════════════════════════════');
+}
+
+// ============================================================
+// === getSystemConfig() — อ่าน config เดิม (backward compat) ===
+// ============================================================
+function getSystemConfig(configSheet) {
+  if (!configSheet) {
+    configSheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName('ตั้งค่าระบบ');
+  }
+  var data = configSheet ? configSheet.getDataRange().getValues() : [];
+  var cfg  = { beforeDays: 7, afterDays: LINE_AFTER_DAYS, notifyHour: LINE_NOTIFY_HOUR,
+               lineToken: '', driveFolderId: '' };
+  for (var i = 1; i < data.length; i++) {
+    var k = String(data[i][0] || '').trim(), v = String(data[i][1] || '').trim();
+    if (k === 'แจ้งเตือนก่อนอบรม (วัน)')       cfg.beforeDays    = parseInt(v) || 7;
+    if (k === 'แจ้งเตือนหลังอบรม (วัน)')        cfg.afterDays     = parseInt(v) || LINE_AFTER_DAYS;
+    if (k === 'เวลาส่งแจ้งเตือน (ชั่วโมง)')     cfg.notifyHour    = parseInt(v) || LINE_NOTIFY_HOUR;
+    if (k === 'LINE Channel Access Token')       cfg.lineToken     = v;
+    if (k === 'Google Drive Folder ID')          cfg.driveFolderId = v;
+  }
+  return cfg;
+}
+
+// helper (ใช้ร่วมกับ getFollowupStatus)
+function _findCol(normHdr, rawHdr, candidates) {
+  for (var c = 0; c < candidates.length; c++) {
+    var idx = normHdr.indexOf(candidates[c]);
+    if (idx >= 0) return idx;
+    idx = rawHdr.indexOf(candidates[c]);
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
+function _fmtDateTh(ds) {
+  if (!ds) return '-';
+  try {
+    var d = new Date(ds);
+    if (isNaN(d.getTime())) return ds;
+    var m = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.',
+             'ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+    return d.getDate() + ' ' + m[d.getMonth()] + ' ' + (d.getFullYear() + 543);
+  } catch(e) { return ds; }
+}
+// === PART 7: บันทึกขออนุมัติ + อัพโหลดไฟล์ Drive ===
+// ============================================
+
+// ชื่อ Sheet สำหรับบันทึกขออนุมัติ — ชี้ไปที่ Sheet ที่มีอยู่แล้ว
+var TRAINING_REQUEST_SHEET = 'อบรม ปีงบประมาณ 2569';
+
+/**
+ * Map ข้อมูลลง Sheet โดยอ่าน header แถวแรกแล้ว match ชื่อคอลัมน์อัตโนมัติ
+ * ถ้า Sheet ว่างเปล่า (ไม่มี header) จะสร้าง header มาตรฐานให้
+ * ถ้ามี header อยู่แล้ว จะ append ต่อท้ายโดย map ตาม column name
+ */
+var STANDARD_HEADERS = [
+  'ลำดับ',
+  'Timestamp',
+  'ชื่อ-สกุล',
+  'ตำแหน่ง',
+  'ระดับ',
+  'กลุ่มภารกิจ',
+  'กลุ่มงาน',
+  'เลขที่ ชม.5',
+  'เลขที่บันทึก',
+  'เรื่อง/หลักสูตร',
+  'วันที่เริ่ม',
+  'วันที่สิ้นสุด',
+  'สถานะหลักสูตร',
+  'ประเภทการอบรม',
+  'สถานที่',
+  'จังหวัด',
+  'หน่วยงานผู้จัด',
+  'ค่าลงทะเบียน',
+  'ค่าเบี้ยเลี้ยง',
+  'ค่าที่พัก',
+  'ค่าพาหนะ',
+  'เงินโครงการ',
+  'รวมค่าใช้จ่าย',
+  'แหล่งงบประมาณ',
+  'ชื่อไฟล์แนบ',
+  'URL ไฟล์แนบ',
+  'เอกสารสรุปผล',
+  'สัญญา',
+  'วุฒิบัตร',
+  'ใบเสร็จ',
+  'บันทึก ชม.5',
+  'บันทึกขออนุมัติ',
+  'บันทึกความ+ชม.5',
+  'LINE ID',
+  'ผู้บันทึก',
+  'วันที่บันทึก',
+  'หมายเหตุ'
+];
+
+// Alias map — ชื่อ header ที่อาจพบใน Sheet เดิม → ชื่อมาตรฐานที่ระบบใช้
+// เพิ่ม alias ที่นี่ถ้า Sheet มี header ชื่อต่างออกไป
+var HEADER_ALIASES = {
+  'ชื่อ'              : 'ชื่อ-สกุล',
+  'ชื่อ สกุล'         : 'ชื่อ-สกุล',
+  'Full Name'         : 'ชื่อ-สกุล',
+  'ชื่อผู้บันทึก'     : 'ผู้บันทึก',
+  'หลักสูตร'          : 'เรื่อง/หลักสูตร',
+  'เรื่อง'            : 'เรื่อง/หลักสูตร',
+  'Topic'             : 'เรื่อง/หลักสูตร',
+  'วันที่'            : 'วันที่เริ่ม',
+  'Date'              : 'วันที่เริ่ม',
+  'กลุ่มงาน/ฝ่าย'    : 'กลุ่มงาน',
+  'ฝ่าย'             : 'กลุ่มงาน',
+  'Department'        : 'กลุ่มงาน',
+  'Position'          : 'ตำแหน่ง',
+  'สถานที่จัด'        : 'สถานที่',
+  'สถานที่อบรม'       : 'สถานที่',
+  'Location'          : 'สถานที่',
+  'สถานที่จัด/จังหวัด': 'จังหวัด',
+  'ค่าใช้จ่ายรวม'     : 'รวมค่าใช้จ่าย',
+  'รวม'               : 'รวมค่าใช้จ่าย',
+  'Total Cost'        : 'รวมค่าใช้จ่าย',
+  'งบประมาณ'          : 'แหล่งงบประมาณ',
+  'ไฟล์แนบ'           : 'ชื่อไฟล์แนบ',
+  'เอกสารแนบ'         : 'ชื่อไฟล์แนบ',
+  'ค่าเบี้ยเลี้ยงเดินทาง': 'ค่าเบี้ยเลี้ยง',
+  'เลขที่ ชม.5 '      : 'เลขที่ ชม.5',
+  'เลขที่บันทึก\nข้อความขออนุมัติ': 'เลขที่บันทึก',
+  'สถานะหลักสูตร*'    : 'สถานะหลักสูตร',
+  'ประเภทการอบรม**'   : 'ประเภทการอบรม',
+  'เอกสารสรุปผลการอบรม': 'เอกสารสรุปผล',
+  'สัญญาอบรม'         : 'สัญญา'
+};
+
+/**
+ * อ่าน header ของ Sheet — ถ้าแถวแรกว่างเปล่าให้สร้าง STANDARD_HEADERS
+ * รองรับ alias (ชื่อ header ทางเลือก) อัตโนมัติ
+ * ถ้า Sheet มี header อยู่แล้ว จะเพิ่ม column ที่ขาดต่อท้ายอัตโนมัติ
+ * คืน { sheet, headers, headerMap }
+ */
+function getOrInitTrainingSheet() {
+  var ss    = getOrCreateSheet();
+  var sheet = ss.getSheetByName(TRAINING_REQUEST_SHEET);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(TRAINING_REQUEST_SHEET);
+  }
+
+  var lastCol = sheet.getLastColumn();
+  var lastRow = sheet.getLastRow();
+
+  var rawHeaders = [];
+  if (lastRow >= 1 && lastCol >= 1) {
+    rawHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function(h) {
+      return String(h === null || h === undefined ? '' : h).trim();
+    });
+  }
+
+  var nonEmpty = rawHeaders.filter(function(h) { return h !== ''; });
+
+  if (nonEmpty.length === 0) {
+    // Sheet ว่าง — สร้าง header มาตรฐาน
+    sheet.getRange(1, 1, 1, STANDARD_HEADERS.length)
+      .setValues([STANDARD_HEADERS])
+      .setFontWeight('bold')
+      .setBackground('#1e3a8a')
+      .setFontColor('#ffffff');
+    sheet.setFrozenRows(1);
+    rawHeaders = STANDARD_HEADERS.slice();
+    Logger.log('\u2705 สร้าง header ใหม่ใน Sheet: ' + TRAINING_REQUEST_SHEET);
+  } else {
+    Logger.log('\u2705 อ่าน ' + nonEmpty.length + ' headers จาก Sheet: ' + nonEmpty.slice(0,5).join(' | ') + '...');
+
+    // ---- เพิ่ม column ที่ขาดโดยอัตโนมัติ (ไม่ลบ column เดิม) ----
+    // สร้าง map ชื่อ header ที่มีอยู่ (รองรับ alias ด้วย)
+    var existingNames = {};
+    for (var ei = 0; ei < rawHeaders.length; ei++) {
+      var eh = rawHeaders[ei];
+      if (eh) {
+        existingNames[eh] = true;
+        // ถ้า header เป็น alias ให้นับ standard name ด้วย
+        if (HEADER_ALIASES[eh]) existingNames[HEADER_ALIASES[eh]] = true;
+      }
+    }
+
+    var colsToAdd = [];
+    for (var si = 0; si < STANDARD_HEADERS.length; si++) {
+      var sh = STANDARD_HEADERS[si];
+      if (!existingNames[sh]) {
+        colsToAdd.push(sh);
+      }
+    }
+
+    if (colsToAdd.length > 0) {
+      var startAddCol = lastCol + 1; // ต่อท้าย column ที่มีอยู่
+      // เพิ่ม header ทีละ column
+      for (var ci = 0; ci < colsToAdd.length; ci++) {
+        var newColIdx = startAddCol + ci;
+        var cell = sheet.getRange(1, newColIdx);
+        cell.setValue(colsToAdd[ci])
+            .setFontWeight('bold')
+            .setBackground('#1e3a8a')
+            .setFontColor('#ffffff');
+        rawHeaders.push(colsToAdd[ci]);
+      }
+      SpreadsheetApp.flush();
+      Logger.log('\u2705 เพิ่ม ' + colsToAdd.length + ' columns ใหม่: ' + colsToAdd.join(', '));
+    }
+  }
+
+  // สร้าง headerMap รองรับทั้ง exact match และ alias
+  var headerMap = {};
+  for (var i = 0; i < rawHeaders.length; i++) {
+    var h = rawHeaders[i];
+    if (!h) continue;
+    // ใส่ชื่อจริง
+    headerMap[h] = i;
+    // ถ้าชื่อนี้มี alias reverse (alias → standard) ให้ใส่ standard ด้วย
+    if (HEADER_ALIASES[h] !== undefined && headerMap[HEADER_ALIASES[h]] === undefined) {
+      headerMap[HEADER_ALIASES[h]] = i;
+      Logger.log('  alias: "' + h + '" \u2192 "' + HEADER_ALIASES[h] + '" at col ' + (i+1));
+    }
+  }
+
+  return { sheet: sheet, headers: rawHeaders, headerMap: headerMap };
+}
+
+/**
+ * ฟังก์ชัน debug: แสดง header จริงของ Sheet อบรม + ตรวจสอบ column ที่ขาด
+ * รันจาก Apps Script Editor เพื่อ diagnose ปัญหา
+ */
+function debugAndFixTrainingSheet() {
+  var info = getOrInitTrainingSheet(); // จะ auto-add column ที่ขาด
+  var sheet = info.sheet;
+  Logger.log('=== debugAndFixTrainingSheet ===');
+  Logger.log('Sheet: ' + TRAINING_REQUEST_SHEET);
+  Logger.log('Total rows: ' + sheet.getLastRow());
+  Logger.log('Total cols: ' + sheet.getLastColumn());
+  Logger.log('Header count: ' + info.headers.length);
+  Logger.log('--- Headers ---');
+  info.headers.forEach(function(h, i) {
+    var found = info.headerMap[h] !== undefined ? '\u2705' : '\u274c';
+    Logger.log('  [' + (i+1) + '] ' + found + ' "' + h + '"');
+  });
+  var missing = STANDARD_HEADERS.filter(function(h) {
+    return info.headerMap[h] === undefined;
+  });
+  if (missing.length > 0) {
+    Logger.log('--- \u274c Missing standard headers ---');
+    missing.forEach(function(h) { Logger.log('  - "' + h + '"'); });
+  } else {
+    Logger.log('--- \u2705 All standard headers present ---');
+  }
+  // แสดง 3 แถวแรก
+  if (sheet.getLastRow() > 1) {
+    var sample = sheet.getRange(2, 1, Math.min(3, sheet.getLastRow()-1), sheet.getLastColumn()).getValues();
+    Logger.log('--- Sample data (first 3 rows) ---');
+    sample.forEach(function(row, ri) {
+      var preview = info.headers.slice(0, Math.min(6, info.headers.length)).map(function(h, ci) {
+        return '"' + h + '"=' + (row[ci] !== '' ? row[ci] : '(ว่าง)');
+      }).join(' | ');
+      Logger.log('  Row ' + (ri+2) + ': ' + preview);
+    });
+  }
+  Logger.log('=== เสร็จสิ้น ===');
+}
+
+/**
+ * สร้าง row array ตาม header ของ Sheet จริง
+ * ใช้ headerMap เพื่อ match ชื่อคอลัมน์
+ */
+function buildRowFromData(data, fileNames, fileUrls, headerMap, headerLength, sequenceNum) {
+  var now = new Date();
+  // ข้อมูลที่ต้องการใส่ — key = header name, value = ค่า
+  var dataMap = {
+    'ลำดับ'           : sequenceNum || '',
+    'Timestamp'       : now,
+    'ชื่อ-สกุล'      : String(data.name       || '').trim(),
+    'ตำแหน่ง'        : String(data.position   || '').trim(),
+    'ระดับ'           : String(data.level      || '').trim(),
+    'กลุ่มภารกิจ'    : String(data.mission    || '').trim(),
+    'กลุ่มงาน'       : String(data.dept       || '').trim(),
+    'เลขที่ ชม.5'    : String(data.hm5        || '').trim(),
+    'เลขที่บันทึก'   : String(data.memo       || '').trim(),
+    'เรื่อง/หลักสูตร': String(data.topic      || '').trim(),
+    'วันที่เริ่ม'    : data.startDate ? new Date(data.startDate) : '',
+    'วันที่สิ้นสุด'  : data.endDate   ? new Date(data.endDate)   : '',
+    'สถานะหลักสูตร'  : String(data.status     || '').trim(),
+    'ประเภทการอบรม'  : String(data.type       || '').trim(),
+    'สถานที่'        : String(data.venue      || '').trim(),
+    'จังหวัด'        : String(data.province   || '').trim(),
+    'หน่วยงานผู้จัด' : String(data.organizer  || '').trim(),
+    'ค่าลงทะเบียน'   : parseFloat(data.costReg)    || 0,
+    'ค่าเบี้ยเลี้ยง'  : parseFloat(data.costTravel) || 0,
+    'ค่าที่พัก'       : parseFloat(data.costHotel)  || 0,
+    'ค่าพาหนะ'        : parseFloat(data.costTrans)  || 0,
+    'เงินโครงการ'     : parseFloat(data.costProj)   || 0,
+    'รวมค่าใช้จ่าย'  : parseFloat(data.totalCost)  || 0,
+    'แหล่งงบประมาณ'  : String(data.budget     || '').trim(),
+    'ชื่อไฟล์แนบ'    : fileNames,
+    'URL ไฟล์แนบ'    : fileUrls,
+    'เอกสารสรุปผล'   : data.docSummary  ? '\u2713' : '',
+    'สัญญา'          : data.docContract ? '\u2713' : '',
+    'วุฒิบัตร'       : data.docCert     ? '\u2713' : '',
+    'ใบเสร็จ'         : data.docReceipt  ? '\u2713' : '',
+    'บันทึก ชม.5'    : data.docHm5      ? '\u2713' : '',
+    'บันทึกขออนุมัติ': data.docApproval ? '\u2713' : '',
+    'บันทึกความ+ชม.5': data.docCombined ? '\u2713' : '',
+    'LINE ID'         : String(data.lineId    || '').trim(),
+    'ผู้บันทึก'      : String(data.recorder  || '').trim(),
+    'วันที่บันทึก'   : data.recDate ? new Date(data.recDate) : now,
+    'หมายเหตุ'        : String(data.note      || '').trim()
+  };
+
+  // สร้าง row ตาม header ที่มีอยู่จริงใน Sheet
+  var row = new Array(headerLength).fill('');
+  for (var key in dataMap) {
+    if (headerMap.hasOwnProperty(key)) {
+      row[headerMap[key]] = dataMap[key];
+    }
+  }
+  return row;
+}
+
+/**
+ * อัพโหลดไฟล์ base64 ไปยัง Google Drive Folder
+ * คืน { name, url, id, size } ต่อไฟล์
+ */
+/**
+ * อัพโหลดไฟล์ไปยัง Google Drive โดยใช้ Drive REST API ผ่าน UrlFetchApp
+ * วิธีนี้ไม่ต้องพึ่ง DriveApp scope จาก Web App — ใช้ ScriptApp.getOAuthToken() แทน
+ * ซึ่งจะได้ token จาก scope ที่ appsscript.json กำหนดไว้
+ */
+function saveFilesToDrive(files) {
+  var results = [];
+  if (!files || files.length === 0) return results;
+
+  // ดึง OAuth token จาก Script runtime (ใช้ scope ที่ประกาศใน appsscript.json)
+  var token = ScriptApp.getOAuthToken();
+
+  // ตรวจสอบว่าโฟลเดอร์มีอยู่จริง (ใช้ Drive API แทน DriveApp)
+  var folderCheck = UrlFetchApp.fetch(
+    'https://www.googleapis.com/drive/v3/files/' + ATTACHMENTS_FOLDER_ID +
+    '?fields=id,name,mimeType',
+    { headers: { 'Authorization': 'Bearer ' + token }, muteHttpExceptions: true }
+  );
+  if (folderCheck.getResponseCode() !== 200) {
+    Logger.log('\u274c ไม่พบโฟลเดอร์ id=' + ATTACHMENTS_FOLDER_ID +
+               ' HTTP=' + folderCheck.getResponseCode());
+    throw new Error('ไม่พบโฟลเดอร์ Drive: ' + folderCheck.getContentText().substring(0, 100));
+  }
+  var folderName = JSON.parse(folderCheck.getContentText()).name;
+  Logger.log('\u2705 โฟลเดอร์: ' + folderName + ' (id=' + ATTACHMENTS_FOLDER_ID + ')');
+
+  for (var i = 0; i < files.length; i++) {
+    var f = files[i];
+    try {
+      if (!f || !f.name || !f.base64) {
+        Logger.log('\u274c ข้ามไฟล์ index=' + i + ' (ข้อมูลไม่ครบ)');
+        continue;
+      }
+
+      // แยก base64 และ mimeType จาก data URI
+      var raw      = f.base64.indexOf(',') !== -1 ? f.base64.split(',').pop() : f.base64;
+      var mimeType = f.mimeType || 'application/octet-stream';
+      if ((!f.mimeType || f.mimeType === 'application/octet-stream') &&
+          f.base64.indexOf('data:') === 0) {
+        var mm = f.base64.match(/^data:([^;]+);/);
+        if (mm) mimeType = mm[1];
+      }
+
+      var bytes = Utilities.base64Decode(raw);
+
+      // สร้างไฟล์ผ่าน Drive REST API (multipart upload)
+      var boundary = '-------HRD_BOUNDARY_' + Date.now();
+      var metadata = JSON.stringify({
+        name: f.name,
+        parents: [ATTACHMENTS_FOLDER_ID],
+        mimeType: mimeType
+      });
+
+      // สร้าง multipart body
+      var metaPart = '--' + boundary + '\r\n' +
+                     'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+                     metadata + '\r\n';
+      var dataPart = '--' + boundary + '\r\n' +
+                     'Content-Type: ' + mimeType + '\r\n' +
+                     'Content-Transfer-Encoding: base64\r\n\r\n' +
+                     raw + '\r\n';
+      var closing  = '--' + boundary + '--';
+
+      var bodyBlob = Utilities.newBlob(metaPart + dataPart + closing)
+                              .setContentType('multipart/related; boundary="' + boundary + '"');
+
+      var uploadResp = UrlFetchApp.fetch(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',
+        {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token },
+          contentType: 'multipart/related; boundary="' + boundary + '"',
+          payload: bodyBlob.getBytes(),
+          muteHttpExceptions: true
+        }
+      );
+
+      var uploadCode = uploadResp.getResponseCode();
+      if (uploadCode !== 200) {
+        throw new Error('Upload HTTP ' + uploadCode + ': ' + uploadResp.getContentText().substring(0, 200));
+      }
+
+      var uploadData = JSON.parse(uploadResp.getContentText());
+      var driveId    = uploadData.id;
+      var driveUrl   = 'https://drive.google.com/file/d/' + driveId + '/view?usp=sharing';
+
+      // ตั้งสิทธิ์ให้ทุกคนที่มี link ดูได้
+      UrlFetchApp.fetch(
+        'https://www.googleapis.com/drive/v3/files/' + driveId + '/permissions',
+        {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token,
+                     'Content-Type': 'application/json' },
+          payload: JSON.stringify({ role: 'reader', type: 'anyone' }),
+          muteHttpExceptions: true
+        }
+      );
+
+      results.push({ name: f.name, url: driveUrl, id: driveId, size: bytes.length });
+      Logger.log('\u2705 อัพโหลดสำเร็จ: ' + f.name + ' | id=' + driveId);
+
+    } catch (err) {
+      var fname = (f && f.name) ? f.name : ('file_' + i);
+      Logger.log('\u274c อัพโหลดล้มเหลว: ' + fname + ' — ' + err.toString());
+      results.push({ name: fname, url: '', id: '', error: err.toString() });
+    }
+  }
+  return results;
+}
+
+/**
+ * บันทึกคำขออบรมลง Sheet + อัพโหลดไฟล์แนบ
+ * (ปรับปรุงให้เริ่มเลขลำดับที่ 215 และรันต่อไปเรื่อยๆ)
+ */
+function saveTrainingRequest(data, files) {
+  try {
+    var info      = getOrInitTrainingSheet();
+    var sheet     = info.sheet;
+    var headerMap = info.headerMap;
+    var hLen      = info.headers.length;
+
+    Logger.log('=== saveTrainingRequest START ===');
+    Logger.log('Sheet: ' + TRAINING_REQUEST_SHEET + ' | headers: ' + hLen);
+    Logger.log('headerMap URL ไฟล์แนบ = ' + headerMap['URL ไฟล์แนบ']);
+    Logger.log('headerMap ชื่อไฟล์แนบ = ' + headerMap['ชื่อไฟล์แนบ']);
+
+    // อัพโหลดไฟล์ก่อน
+    var fileResults = [];
+    var fileNames   = '';
+    var fileUrls    = '';
+    if (files && files.length > 0) {
+      Logger.log('กำลังอัพโหลด ' + files.length + ' ไฟล์...');
+      fileResults = saveFilesToDrive(files);
+      var okList   = fileResults.filter(function(r) { return r.url && r.url.length > 10; });
+      var failList = fileResults.filter(function(r) { return !r.url || r.url.length <= 10; });
+      fileNames = fileResults.map(function(r) { return r.name; }).join(', ');
+      fileUrls  = okList.map(function(r) { return r.url; }).join('\n');
+      Logger.log('✅ Upload: ' + okList.length + '/' + fileResults.length + ' สำเร็จ');
+      okList.forEach(function(r) { Logger.log('  - ' + r.name + ' → ' + r.url); });
+      if (failList.length > 0) {
+        Logger.log('❌ ล้มเหลว: ' + failList.map(function(r){ return r.name + '(' + (r.error||'?') + ')'; }).join(', '));
+      }
+    }
+
+    // คำนวณลำดับถัดไป: scan ทุกแถวหาค่า max แล้ว +1
+    var sequenceNum = 1;
+    var seqColIdx2 = headerMap['ลำดับ'];
+    if (seqColIdx2 !== undefined && sheet.getLastRow() > 1) {
+      var seqVals = sheet.getRange(2, seqColIdx2 + 1, sheet.getLastRow() - 1, 1).getValues();
+      for (var sv = 0; sv < seqVals.length; sv++) {
+        var n = parseInt(seqVals[sv][0], 10);
+        if (!isNaN(n) && n >= sequenceNum) sequenceNum = n + 1;
+      }
+    }
+    Logger.log('sequenceNum = ' + sequenceNum);
+
+    // เก็บ newRow ก่อน append
+    var newRow = sheet.getLastRow() + 1;
+    Logger.log('newRow = ' + newRow);
+
+    // บันทึกแถว (ใส่ fileUrls เป็น plain text ก่อนเพื่อให้แถวสมบูรณ์)
+    var row = buildRowFromData(data, fileNames, fileUrls, headerMap, hLen, sequenceNum);
+    sheet.appendRow(row);
+    SpreadsheetApp.flush();
+    Logger.log('✅ appendRow สำเร็จ');
+
+    // ===== หา column index ของ "URL ไฟล์แนบ" อย่างน่าเชื่อถือ =====
+    // วิธีที่ 1: จาก headerMap
+    var urlColIdx = headerMap['URL ไฟล์แนบ'];
+    // วิธีที่ 2 (fallback): scan header row จาก Sheet โดยตรง
+    if (urlColIdx === undefined) {
+      Logger.log('⚠️ headerMap ไม่พบ "URL ไฟล์แนบ" — scan header row โดยตรง...');
+      var lastCol = sheet.getLastColumn();
+      if (lastCol > 0) {
+        var headerRow = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+        for (var hi = 0; hi < headerRow.length; hi++) {
+          var hVal = String(headerRow[hi] || '').trim();
+          if (hVal === 'URL ไฟล์แนบ') {
+            urlColIdx = hi;
+            Logger.log('✅ พบ "URL ไฟล์แนบ" จาก scan ที่ col index ' + hi + ' (col ' + (hi+1) + ')');
+            break;
+          }
+        }
+      }
+    }
+
+    Logger.log('urlColIdx (0-based) = ' + urlColIdx);
+
+    // ===== ใส่ HYPERLINK formula =====
+    var okFiles = fileResults.filter(function(r) { return r.url && r.url.length > 10; });
+    Logger.log('okFiles.length = ' + okFiles.length);
+
+    if (urlColIdx !== undefined && urlColIdx !== null && okFiles.length > 0) {
+      var sheetCol = urlColIdx + 1; // 1-based สำหรับ getRange
+      var urlCell  = sheet.getRange(newRow, sheetCol);
+      // เคลียร์ค่าเดิมก่อน (อาจมี plain text จาก appendRow)
+      urlCell.clearContent();
+
+      var formula;
+      if (okFiles.length === 1) {
+        var safeName = okFiles[0].name.replace(/"/g, '').replace(/'/g, '');
+        formula = '=HYPERLINK("' + okFiles[0].url + '","' + safeName + '")';
+      } else {
+        var safeFirst = okFiles[0].name.replace(/"/g, '').replace(/'/g, '');
+        var label     = safeFirst + ' (+' + (okFiles.length - 1) + ')';
+        formula       = '=HYPERLINK("' + okFiles[0].url + '","' + label + '")';
+        // ใส่ URL ทั้งหมดใน note
+        var noteText = okFiles.map(function(r) { return r.name + '\n' + r.url; }).join('\n\n');
+        urlCell.setNote(noteText);
+      }
+
+      Logger.log('formula = ' + formula);
+      urlCell.setFormula(formula);
+      SpreadsheetApp.flush();
+
+      // ตรวจสอบว่า formula ถูกใส่จริงไหม
+      var checkVal = sheet.getRange(newRow, sheetCol).getFormula();
+      Logger.log('✅ formula ใน cell หลัง set: "' + checkVal + '"');
+    } else {
+      Logger.log('⚠️ ข้าม HYPERLINK: urlColIdx=' + urlColIdx + ', okFiles=' + okFiles.length);
+      if (fileUrls) {
+        // fallback: ใส่ URL plain text
+        if (urlColIdx !== undefined) {
+          sheet.getRange(newRow, urlColIdx + 1).setValue(fileUrls);
+          SpreadsheetApp.flush();
+          Logger.log('  → ใส่ URL plain text แทน');
+        }
+      }
+    }
+
+    // ===== อัปเดต column "ชื่อไฟล์แนบ" =====
+    var nameColIdx = headerMap['ชื่อไฟล์แนบ'];
+    if (nameColIdx === undefined) {
+      // fallback scan
+      var lastColN = sheet.getLastColumn();
+      if (lastColN > 0) {
+        var hRowN = sheet.getRange(1, 1, 1, lastColN).getValues()[0];
+        for (var hn = 0; hn < hRowN.length; hn++) {
+          if (String(hRowN[hn]||'').trim() === 'ชื่อไฟล์แนบ') {
+            nameColIdx = hn;
+            break;
+          }
+        }
+      }
+    }
+    if (nameColIdx !== undefined && fileNames) {
+      sheet.getRange(newRow, nameColIdx + 1).setValue(fileNames);
+      SpreadsheetApp.flush();
+      Logger.log('✅ ใส่ชื่อไฟล์แนบ: ' + fileNames);
+    }
+
+    Logger.log('=== saveTrainingRequest SUCCESS row=' + newRow + ' ===');
+    return {
+      success    : true,
+      message    : 'บันทึกสำเร็จ',
+      fileResults: fileResults,
+      fileCount  : fileResults.length
+    };
+
+  } catch (error) {
+    Logger.log('❌ saveTrainingRequest ERROR: ' + error.toString());
+    return { success: false, message: 'เกิดข้อผิดพลาด: ' + error.toString() };
+  }
+}
+
+/**
+ * อัปเดต (แก้ไขย้อนหลัง) คำขออบรมที่บันทึกไว้แล้ว
+ * รองรับ: แก้เลขที่ ชม.5 / บันทึก, ค่าใช้จ่าย, สถานะเอกสาร, แนบไฟล์เพิ่มเติม, หมายเหตุ
+ */
+function updateTrainingRequest(updates, files) {
+  try {
+    var info      = getOrInitTrainingSheet();
+    var sheet     = info.sheet;
+    var hMap      = info.headerMap;
+
+    Logger.log('=== updateTrainingRequest START rowIndex=' + updates.rowIndex + ' ===');
+
+    // ค้นหาแถวที่ถูกต้อง — ใช้ rowIndex ที่ส่งมาถ้ามี มิฉะนั้น scan ด้วย timestamp/id
+    var targetRow = -1;
+
+    if (updates.rowIndex && updates.rowIndex >= 2) {
+      targetRow = updates.rowIndex;
+      Logger.log('ใช้ rowIndex โดยตรง: ' + targetRow);
+    } else {
+      // fallback: scan ทุกแถว หา timestamp ที่ตรงกับ savedAt
+      var allData = sheet.getDataRange().getValues();
+      var tsColIdx = hMap['Timestamp'];
+      var nameColIdx2 = hMap['ชื่อ-สกุล'];
+      for (var i = 1; i < allData.length; i++) {
+        var rowName = String(allData[i][nameColIdx2] || '').trim();
+        if (rowName === String(updates.name || '').trim()) {
+          targetRow = i + 1;
+          break;
+        }
+      }
+      Logger.log('scan หาแถว: ' + targetRow);
+    }
+
+    if (targetRow < 2) {
+      return { success: false, message: 'ไม่พบแถวที่ต้องการแก้ไข' };
+    }
+
+    // Helper: เขียนค่าลง cell ถ้า column มีอยู่
+    var setCell = function(headerName, value) {
+      var ci = hMap[headerName];
+      if (ci !== undefined) {
+        sheet.getRange(targetRow, ci + 1).setValue(value);
+      }
+    };
+
+    // อัปเดตเลขที่ ชม.5 และบันทึก
+    if (updates.hm5  !== undefined) setCell('เลขที่ ชม.5',    updates.hm5);
+    if (updates.memo !== undefined) setCell('เลขที่บันทึก',   updates.memo);
+
+    // อัปเดตค่าใช้จ่าย
+    if (updates.costReg    !== undefined) setCell('ค่าลงทะเบียน',   updates.costReg);
+    if (updates.costTravel !== undefined) setCell('ค่าเบี้ยเลี้ยง',   updates.costTravel);
+    if (updates.costHotel  !== undefined) setCell('ค่าที่พัก',        updates.costHotel);
+    if (updates.costTrans  !== undefined) setCell('ค่าพาหนะ',         updates.costTrans);
+    if (updates.costProj   !== undefined) setCell('เงินโครงการ',      updates.costProj);
+    if (updates.totalCost  !== undefined) setCell('รวมค่าใช้จ่าย',    updates.totalCost);
+    if (updates.budget     !== undefined) setCell('แหล่งงบประมาณ',    updates.budget);
+
+    // อัปเดตสถานะเอกสาร
+    setCell('เอกสารสรุปผล',   updates.docSummary  ? '\u2713' : '');
+    setCell('สัญญา',          updates.docContract ? '\u2713' : '');
+    setCell('วุฒิบัตร',       updates.docCert     ? '\u2713' : '');
+    setCell('ใบเสร็จ',        updates.docReceipt  ? '\u2713' : '');
+    setCell('บันทึก ชม.5',   updates.docHm5      ? '\u2713' : '');
+    setCell('บันทึกขออนุมัติ',updates.docApproval ? '\u2713' : '');
+    setCell('บันทึกความ+ชม.5',updates.docCombined ? '\u2713' : '');
+
+    // อัปเดตหมายเหตุ
+    if (updates.note !== undefined) {
+      var existNote = String(sheet.getRange(targetRow, hMap['หมายเหตุ'] + 1).getValue() || '').trim();
+      var newNote = existNote
+        ? existNote + '\n[แก้ไข ' + Utilities.formatDate(new Date(), 'Asia/Bangkok', 'dd/MM/yyyy HH:mm') + '] ' + (updates.note || '')
+        : (updates.note || '');
+      setCell('หมายเหตุ', newNote);
+    }
+
+    // ── helper: ดึง URL ทั้งหมดจาก cell (formula + note + plain value) ──
+    var extractUrlsFromCell = function(cell) {
+      var out = [];
+      var formula = cell.getFormula();
+      var note    = cell.getNote();
+      var value   = String(cell.getValue() || '').trim();
+
+      // 1. จาก HYPERLINK formula  =HYPERLINK("https://...","label")
+      if (formula) {
+        var mFm = formula.match(/https?:\/\/[^"\s]+/g);
+        if (mFm) out = out.concat(mFm);
+      }
+      // 2. จาก note (เก็บ URL ทุกตัวแบบ plain ต่อบรรทัด)
+      if (note) {
+        note.split('\n').forEach(function(line) {
+          var t = line.trim();
+          if (t.indexOf('http') === 0) out.push(t);
+        });
+      }
+      // 3. fallback: ถ้า value เป็น URL ตรงๆ
+      if (out.length === 0 && value.indexOf('http') === 0) {
+        out.push(value);
+      }
+      // deduplicate
+      var seen = {};
+      return out.filter(function(u) {
+        if (!u || seen[u]) return false;
+        seen[u] = true;
+        return true;
+      });
+    };
+
+    // ── helper: เขียน URL ทั้งหมดลง cell ให้ตรงกับ pattern เดิม ──
+    // formula = =HYPERLINK("url_ล่าสุด","ชื่อไฟล์ล่าสุด (+N)") 
+    // note    = url1\nurl2\nurl3\n...  (1 URL ต่อบรรทัด)
+    var writeUrlsToCell = function(cell, fileObjArr, existingUrlArr) {
+      // fileObjArr = [{name, url}, ...] ไฟล์ใหม่
+      // existingUrlArr = [url, ...] URL เดิม
+      var allUrls = existingUrlArr.slice();
+      fileObjArr.forEach(function(f) {
+        if (f.url && allUrls.indexOf(f.url) === -1) allUrls.push(f.url);
+      });
+      if (allUrls.length === 0) return;
+
+      cell.clearContent();
+      cell.clearNote();
+
+      // formula ชี้ที่ไฟล์ใหม่สุด
+      var lastNew   = fileObjArr[fileObjArr.length - 1];
+      var safeName  = lastNew.name.replace(/"/g, '').replace(/'/g, '');
+      var label     = allUrls.length > 1
+        ? safeName + ' (+' + (allUrls.length - 1) + ')'
+        : safeName;
+      cell.setFormula('=HYPERLINK("' + lastNew.url + '","' + label + '")');
+
+      // note เก็บทุก URL แบบ 1 URL ต่อบรรทัด
+      if (allUrls.length > 1) {
+        cell.setNote(allUrls.join('\n'));
+      }
+      Logger.log('\u2705 writeUrlsToCell: ' + allUrls.length + ' URLs');
+    };
+
+    // อัปโหลดไฟล์เพิ่มเติม (ถ้ามี)
+    var fileResults = [];
+    if (files && files.length > 0) {
+      Logger.log('อัพโหลดไฟล์เพิ่มเติม ' + files.length + ' ไฟล์...');
+      fileResults = saveFilesToDrive(files);
+      Logger.log('saveFilesToDrive คืน ' + fileResults.length + ' ผลลัพธ์');
+
+      var newOk = fileResults.filter(function(r) {
+        Logger.log('  file: ' + r.name + ' url=' + (r.url || 'EMPTY') + ' err=' + (r.error || '-'));
+        return r.url && r.url.indexOf('http') === 0;
+      });
+      Logger.log('newOk count=' + newOk.length);
+
+      if (newOk.length > 0) {
+        // อ่านชื่อไฟล์เดิม
+        var nameColIdx3 = hMap['ชื่อไฟล์แนบ'];
+        var oldNames = nameColIdx3 !== undefined
+          ? String(sheet.getRange(targetRow, nameColIdx3 + 1).getValue() || '').trim()
+          : '';
+
+        // อ่าน URL เดิมจาก cell
+        var urlColIdx3 = hMap['URL ไฟล์แนบ'];
+        var existUrls  = [];
+        if (urlColIdx3 !== undefined) {
+          existUrls = extractUrlsFromCell(sheet.getRange(targetRow, urlColIdx3 + 1));
+          Logger.log('existUrls count=' + existUrls.length);
+        }
+
+        // อัปเดตชื่อไฟล์
+        var addNames = newOk.map(function(r) { return r.name; }).join(', ');
+        var allNames = oldNames ? oldNames + ', ' + addNames : addNames;
+        if (nameColIdx3 !== undefined) {
+          sheet.getRange(targetRow, nameColIdx3 + 1).setValue(allNames);
+          Logger.log('\u2705 เขียนชื่อไฟล์: ' + allNames);
+        }
+
+        // เขียน URL ลง cell
+        if (urlColIdx3 !== undefined) {
+          writeUrlsToCell(
+            sheet.getRange(targetRow, urlColIdx3 + 1),
+            newOk,
+            existUrls
+          );
+        }
+      } else {
+        Logger.log('\u26a0 ไม่มีไฟล์อัพโหลดสำเร็จ — ข้ามการเขียน URL');
+      }
+    }
+
+    SpreadsheetApp.flush();
+    Logger.log('\u2705 flush เสร็จ');
+
+    // ── คืน finalNames / finalUrls ให้ client ──
+    var finalNames = '';
+    var finalUrls  = '';
+    var nameColF = hMap['ชื่อไฟล์แนบ'];
+    var urlColF  = hMap['URL ไฟล์แนบ'];
+    if (nameColF !== undefined) {
+      finalNames = String(sheet.getRange(targetRow, nameColF + 1).getValue() || '').trim();
+    }
+    if (urlColF !== undefined) {
+      var finalUrlArr = extractUrlsFromCell(sheet.getRange(targetRow, urlColF + 1));
+      finalUrls = finalUrlArr.join('\n');
+    }
+    Logger.log('finalNames=' + finalNames);
+    Logger.log('finalUrls=' + finalUrls.substring(0, 100));
+
+    Logger.log('=== updateTrainingRequest SUCCESS row=' + targetRow + ' ===');
+    return {
+      success    : true,
+      message    : 'แก้ไขสำเร็จ (แถว ' + targetRow + ')',
+      fileResults: fileResults,
+      fileNames  : finalNames,
+      fileUrls   : finalUrls
+    };
+
+  } catch (error) {
+    Logger.log('\u274c updateTrainingRequest ERROR: ' + error.toString());
+    return { success: false, message: 'เกิดข้อผิดพลาด: ' + error.toString() };
+  }
+}
+
+/**
+ * แก้ไข hyperlink ย้อนหลัง — สำหรับแถวที่มี URL ใน "URL ไฟล์แนบ" แต่ยังไม่เป็น HYPERLINK formula
+ * รันจาก Script Editor เพื่อแก้แถวเก่าทั้งหมด
+ */
+function fixMissingHyperlinks() {
+  try {
+    var info    = getOrInitTrainingSheet();
+    var sheet   = info.sheet;
+    var hMap    = info.headerMap;
+
+    // หา column index
+    var urlColIdx  = hMap['URL ไฟล์แนบ'];
+    var nameColIdx = hMap['ชื่อไฟล์แนบ'];
+
+    if (urlColIdx === undefined) {
+      // scan header row
+      var lastCol = sheet.getLastColumn();
+      var hRow = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+      for (var i = 0; i < hRow.length; i++) {
+        if (String(hRow[i]||'').trim() === 'URL ไฟล์แนบ')  urlColIdx  = i;
+        if (String(hRow[i]||'').trim() === 'ชื่อไฟล์แนบ') nameColIdx = i;
+      }
+    }
+
+    if (urlColIdx === undefined) {
+      Logger.log('\u274c ไม่พบ column "URL ไฟล์แนบ"');
+      return;
+    }
+
+    Logger.log('urlColIdx=' + urlColIdx + ' (col ' + (urlColIdx+1) + ')');
+
+    var lastRow = sheet.getLastRow();
+    var fixed   = 0;
+    var skipped = 0;
+
+    for (var r = 2; r <= lastRow; r++) {
+      var cell    = sheet.getRange(r, urlColIdx + 1);
+      var formula = cell.getFormula();
+      var value   = String(cell.getValue() || '').trim();
+
+      // ถ้ามี formula อยู่แล้ว → ข้าม
+      if (formula && formula.indexOf('HYPERLINK') !== -1) {
+        skipped++;
+        continue;
+      }
+
+      // ถ้า value เป็น URL (เริ่มด้วย https://)
+      if (value && value.indexOf('https://') === 0) {
+        // หาชื่อไฟล์ (จาก ชื่อไฟล์แนบ column)
+        var fName = '';
+        if (nameColIdx !== undefined) {
+          fName = String(sheet.getRange(r, nameColIdx + 1).getValue() || '').trim();
+        }
+        // ถ้ามีหลาย URL (คั่นด้วย \n) ใช้ URL แรก
+        var urls  = value.split('\n');
+        var names = fName ? fName.split(', ') : [];
+        var firstUrl  = urls[0].trim();
+        var firstName = (names[0] || 'ไฟล์แนบ').replace(/"/g,'').replace(/'/g,'');
+        var hlFormula = '=HYPERLINK("' + firstUrl + '","' + firstName + '")';
+        cell.clearContent();
+        cell.setFormula(hlFormula);
+        if (urls.length > 1) {
+          var note = urls.map(function(u, ui) {
+            return (names[ui] || u) + '\n' + u;
+          }).join('\n\n');
+          cell.setNote(note);
+        }
+        fixed++;
+        Logger.log('\u2705 Row ' + r + ': "' + firstName + '" → ' + firstUrl.substring(0,60));
+      }
+    }
+
+    SpreadsheetApp.flush();
+    Logger.log('=== fixMissingHyperlinks เสร็จสิ้น: fixed=' + fixed + ' skipped=' + skipped + ' ===');
+
+  } catch(e) {
+    Logger.log('\u274c fixMissingHyperlinks error: ' + e.toString());
+  }
+}
+function getRecentTrainingRequests(limit) {
+  try {
+    limit = limit || 10;
+    var info    = getOrInitTrainingSheet();
+    var sheet   = info.sheet;
+    var hMap    = info.headerMap;
+    var lastRow = sheet.getLastRow();
+
+    Logger.log('getRecentTrainingRequests: sheet=' + TRAINING_REQUEST_SHEET +
+               ', lastRow=' + lastRow +
+               ', headerCount=' + info.headers.length);
+
+    if (lastRow <= 1) {
+      Logger.log('getRecentTrainingRequests: Sheet ว่างเปล่า');
+      return { success: true, data: [] };
+    }
+
+    var dataRows = lastRow - 1; // ไม่รวม header
+
+    // ── อ่านข้อมูลทั้งหมดในครั้งเดียว (batch) ──
+    var allData = sheet.getRange(2, 1, dataRows, info.headers.length).getValues();
+
+    // ── อ่าน formula ของ column "URL ไฟล์แนบ" แบบ batch ──
+    var urlColIdx = hMap['URL ไฟล์แนบ'];
+    var urlFormulas = [];
+    var urlNotes    = [];
+    if (urlColIdx !== undefined) {
+      var urlRange = sheet.getRange(2, urlColIdx + 1, dataRows, 1);
+      var rawFormulas = urlRange.getFormulas();   // batch: 1 API call
+      var rawNotes    = urlRange.getNotes();      // batch: 1 API call
+      for (var ri = 0; ri < dataRows; ri++) {
+        urlFormulas.push(rawFormulas[ri][0] || '');
+        urlNotes.push(rawNotes[ri][0]    || '');
+      }
+    }
+
+    // ── เรียงตาม Timestamp จริง (ล่าสุดก่อน) ──
+    var tsColIdx = hMap['Timestamp'];
+    var sortIdx  = [];
+    for (var si = 0; si < dataRows; si++) {
+      var tsVal = (tsColIdx !== undefined) ? allData[si][tsColIdx] : null;
+      var tsMs  = (tsVal instanceof Date) ? tsVal.getTime()
+                : (tsVal ? new Date(tsVal).getTime() : 0);
+      if (isNaN(tsMs)) tsMs = 0;
+      // seqNum สำรอง
+      var seqColIdxTmp = hMap['ลำดับ'];
+      var seqV = seqColIdxTmp !== undefined ? (parseFloat(allData[si][seqColIdxTmp]) || 0) : si;
+      sortIdx.push({ i: si, tsMs: tsMs, seq: seqV });
+    }
+    // Primary: Timestamp มากสุดก่อน | Secondary: seqNum มากสุดก่อน
+    sortIdx.sort(function(a, b) {
+      if (b.tsMs !== a.tsMs) return b.tsMs - a.tsMs;
+      return b.seq - a.seq;
+    });
+
+    var results = [];
+
+    for (var si2 = 0; si2 < sortIdx.length && results.length < limit; si2++) {
+      var i = sortIdx[si2].i;
+      var r = allData[i];
+
+      var hMapRef = hMap;
+      var rowRef  = r;
+
+      var getVal = function(key) {
+        var ci = hMapRef[key];
+        return ci !== undefined ? rowRef[ci] : undefined;
+      };
+      var getByIdx = function(idx) {
+        return idx < rowRef.length ? rowRef[idx] : '';
+      };
+      var gStr = function(key) {
+        var v = getVal(key);
+        return String(v === null || v === undefined ? '' : v).trim();
+      };
+      var gDate = function(key) {
+        var v = getVal(key);
+        if (!v) return '';
+        try {
+          var d = (v instanceof Date) ? v : new Date(v);
+          return Utilities.formatDate(d, 'Asia/Bangkok', 'yyyy-MM-dd');
+        } catch(ex) { return ''; }
+      };
+      var gFloat = function(key) { return parseFloat(getVal(key)) || 0; };
+      var gTs = function(key) {
+        var v = getVal(key);
+        if (!v) return '';
+        try {
+          var d = (v instanceof Date) ? v : new Date(v);
+          return Utilities.formatDate(d, 'Asia/Bangkok', 'yyyy-MM-dd HH:mm');
+        } catch(ex) { return ''; }
+      };
+
+      var name = gStr('ชื่อ-สกุล') || gStr('ชื่อ') || String(getByIdx(1) || '').trim();
+      if (!name) continue;
+
+      var topic = gStr('เรื่อง/หลักสูตร') || gStr('หลักสูตร') || gStr('เรื่อง') || String(getByIdx(8) || '').trim();
+      var savedAt = gTs('Timestamp') || (getByIdx(0) ? (function(){
+        try { return Utilities.formatDate(new Date(getByIdx(0)),'Asia/Bangkok','yyyy-MM-dd HH:mm'); } catch(ex){ return ''; }
+      })() : '');
+
+      // ── ดึง URL จาก batch arrays ──
+      var fileUrlsStr = '';
+      if (urlColIdx !== undefined) {
+        var formula = urlFormulas[i] || '';
+        var note    = urlNotes[i]    || '';
+        var urls    = [];
+
+        // 1. จาก HYPERLINK formula
+        if (formula && formula.toUpperCase().indexOf('HYPERLINK') !== -1) {
+          var mF = formula.match(/https?:\/\/[^"'\s]+/g);
+          if (mF) urls = urls.concat(mF);
+        }
+        // 2. จาก cell note (กรณีไฟล์หลายตัว)
+        if (note) {
+          var mN = note.match(/https?:\/\/[^\s\n]+/g);
+          if (mN) urls = urls.concat(mN);
+        }
+        // 3. fallback: plain URL ใน cell value
+        if (urls.length === 0) {
+          var plain = String(rowRef[urlColIdx] || '').trim();
+          if (plain.indexOf('http') === 0) urls.push(plain);
+        }
+        // deduplicate
+        var seen = {};
+        urls = urls.filter(function(u) { if (seen[u]) return false; seen[u] = true; return true; });
+        fileUrlsStr = urls.join('\n');
+      }
+
+      // อ่าน seqNum จากคอลัมน์ "ลำดับ" จริงในชีท (ไม่ hardcode BASE_START)
+      var seqRaw = gStr('ลำดับ');
+      var seqNum = seqRaw !== '' ? seqRaw : String(i + 2); // i+2 = row จริง (1-based + skip header)
+      results.push({
+        savedAt    : savedAt,
+        tsMs       : sortIdx[si2].tsMs,
+        seqNum     : seqNum,
+        name       : name,
+        position   : gStr('ตำแหน่ง'),
+        mission    : gStr('กลุ่มภารกิจ'),
+        dept       : gStr('กลุ่มงาน'),
+        topic      : topic,
+        startDate  : gDate('วันที่เริ่ม'),
+        endDate    : gDate('วันที่สิ้นสุด'),
+        venue      : gStr('สถานที่'),
+        province   : gStr('จังหวัด'),
+        totalCost  : gFloat('รวมค่าใช้จ่าย'),
+        budget     : gStr('แหล่งงบประมาณ'),
+        fileNames  : gStr('ชื่อไฟล์แนบ'),
+        fileUrls   : fileUrlsStr,
+        // [FIX] รองรับทั้ง '✓' และชื่อไฟล์แนบ (เช่น 'สรุปงาน.pdf') — ถือว่ามีเอกสารเมื่อเซลล์ไม่ว่าง
+        docSummary : gStr('เอกสารสรุปผล').length > 0,
+        docContract: gStr('สัญญา').length        > 0,
+        docCert    : gStr('วุฒิบัตร').length     > 0,
+        docReceipt : gStr('ใบเสร็จ').length      > 0,
+        docHm5     : gStr('บันทึก ชม.5').length  > 0,
+        docApproval: gStr('บันทึกขออนุมัติ').length > 0,
+        docCombined: gStr('บันทึกความ+ชม.5').length > 0,
+        lineId     : gStr('LINE ID'),
+        recorder   : gStr('ผู้บันทึก'),
+        hm5        : gStr('เลขที่ ชม.5'),
+        memo       : gStr('เลขที่บันทึก'),
+        note       : gStr('หมายเหตุ'),
+        rowIndex   : i + 2,   // +2 เพราะ 1-based และข้ามแถว header
+        costReg    : gFloat('ค่าลงทะเบียน'),
+        costTravel : gFloat('ค่าเบี้ยเลี้ยง'),
+        costHotel  : gFloat('ค่าที่พัก'),
+        costTrans  : gFloat('ค่าพาหนะ'),
+        costProj   : gFloat('เงินโครงการ')
+      });
+    }
+
+    Logger.log('\u2705 getRecentTrainingRequests: คืน ' + results.length + ' รายการ');
+    return { success: true, data: results };
+
+  } catch (error) {
+    Logger.log('\u274c getRecentTrainingRequests: ' + error.toString());
+    return { success: false, message: 'getRecentTrainingRequests error: ' + error.toString() };
+  }
+}
+
+
+
+
+/**
+ * ============================================
+ * === backfillFileUrls() ===
+ * สแกนทุกแถวในชีท "อบรม ปีงบประมาณ 2569"
+ * อ่าน HYPERLINK formula จากคอลัมน์ "ชื่อไฟล์แนบ"
+ * แล้วเขียน URL plain text ลงคอลัมน์ "URL ไฟล์แนบ"
+ * (สำหรับแถวที่ยังไม่มี URL ในคอลัมน์นั้น)
+ *
+ * ▶ รันจาก Apps Script Editor ครั้งเดียว เพื่อ backfill ข้อมูลเก่า
+ * ▶ หรือเรียกผ่าน Web App ก็ได้ (ใช้เวลาตามจำนวนแถว)
+ * ============================================
+ */
+function backfillFileUrls() {
+  try {
+    var info    = getOrInitTrainingSheet();
+    var sheet   = info.sheet;
+    var hMap    = info.headerMap;
+    var lastRow = sheet.getLastRow();
+
+    if (lastRow <= 1) {
+      Logger.log('backfillFileUrls: Sheet ว่าง ไม่มีข้อมูล');
+      return { success: true, updated: 0, message: 'Sheet ว่าง' };
+    }
+
+    var dataRows   = lastRow - 1;
+    var nameColIdx = hMap['ชื่อไฟล์แนบ'];
+    var urlColIdx  = hMap['URL ไฟล์แนบ'];
+
+    if (nameColIdx === undefined || urlColIdx === undefined) {
+      Logger.log('backfillFileUrls: ไม่พบคอลัมน์ "ชื่อไฟล์แนบ" หรือ "URL ไฟล์แนบ"');
+      return { success: false, message: 'ไม่พบคอลัมน์ที่ต้องการ' };
+    }
+
+    Logger.log('backfillFileUrls: สแกน ' + dataRows + ' แถว, nameCol=' + (nameColIdx+1) + ', urlCol=' + (urlColIdx+1));
+
+    // อ่าน formula ของ "ชื่อไฟล์แนบ" (batch)
+    var nameRange    = sheet.getRange(2, nameColIdx + 1, dataRows, 1);
+    var nameFormulas = nameRange.getFormulas();
+    var nameNotes    = nameRange.getNotes();
+    var nameValues   = nameRange.getValues();
+
+    // อ่าน URL ปัจจุบันใน "URL ไฟล์แนบ" (batch)
+    var urlRange    = sheet.getRange(2, urlColIdx + 1, dataRows, 1);
+    var urlFormulas = urlRange.getFormulas();
+    var urlValues   = urlRange.getValues();
+
+    var updatedCount = 0;
+    var skippedCount = 0;
+    var noUrlCount   = 0;
+
+    // เตรียม array สำหรับ batch write (copy ค่าปัจจุบันก่อน ไม่แตะแถวที่มีข้อมูลอยู่แล้ว)
+    var outputValues = urlValues.map(function(row) { return [row[0]]; });
+
+    for (var i = 0; i < dataRows; i++) {
+      // ถ้า URL ไฟล์แนบมีข้อมูลอยู่แล้ว — ข้ามเลย
+      var existingFormula = urlFormulas[i][0] || '';
+      var existingValue   = String(urlValues[i][0] || '').trim();
+      if (existingFormula !== '' || existingValue !== '') {
+        skippedCount++;
+        continue;
+      }
+
+      // ดึง URL จากคอลัมน์ "ชื่อไฟล์แนบ"
+      var urls = [];
+
+      // 1. จาก HYPERLINK formula เช่น =HYPERLINK("https://drive.google.com/...","389.pdf")
+      var nameFm = nameFormulas[i][0] || '';
+      if (nameFm && nameFm.toUpperCase().indexOf('HYPERLINK') !== -1) {
+        var mFm = nameFm.match(/https?:\/\/[^"'\s]+/g);
+        if (mFm) urls = urls.concat(mFm);
+      }
+
+      // 2. จาก note ของ "ชื่อไฟล์แนบ" (กรณีไฟล์หลายตัว เก็บ URL ใน note)
+      var nameNote = nameNotes[i][0] || '';
+      if (nameNote) {
+        var mNote = nameNote.match(/https?:\/\/[^\s\n]+/g);
+        if (mNote) urls = urls.concat(mNote);
+      }
+
+      // 3. fallback: ถ้า cell value เป็น URL ตรงๆ
+      var nameVal = String(nameValues[i][0] || '').trim();
+      if (urls.length === 0 && nameVal.indexOf('http') === 0) {
+        urls.push(nameVal);
+      }
+
+      if (urls.length === 0) {
+        noUrlCount++;
+        continue; // ไม่มี URL จริงๆ (แถวที่ยังไม่มีไฟล์แนบ)
+      }
+
+      // deduplicate
+      var seen = {};
+      urls = urls.filter(function(u) {
+        if (!u || seen[u]) return false;
+        seen[u] = true;
+        return true;
+      });
+
+      // เขียนลง output array — batch write ครั้งเดียวด้านล่าง
+      outputValues[i] = [urls.join('\n')];
+      updatedCount++;
+
+      Logger.log('Row ' + (i + 2) + ': ' + urls.length + ' URL(s) → ' + urls[0]);
+    }
+
+    // Batch write ครั้งเดียว — ประหยัด API call มากกว่า setRange ใน loop
+    if (updatedCount > 0) {
+      urlRange.setValues(outputValues);
+    }
+
+    SpreadsheetApp.flush();
+
+    var msg = 'backfillFileUrls เสร็จ: อัปเดต ' + updatedCount + ' แถว, ข้าม ' + skippedCount + ' แถว (มีข้อมูลอยู่แล้ว), ไม่มีไฟล์ ' + noUrlCount + ' แถว';
+    Logger.log('✅ ' + msg);
+    return { success: true, updated: updatedCount, skipped: skippedCount, noUrl: noUrlCount, message: msg };
+
+  } catch (e) {
+    Logger.log('❌ backfillFileUrls error: ' + e.toString());
+    return { success: false, message: e.toString() };
+  }
+}
+
+
+/**
+ * Helper: alias สำหรับ backward compat — เรียก debugAndFixTrainingSheet() แทน
+ */
+function debugTrainingSheetHeaders() {
+  debugAndFixTrainingSheet();
+}
+
+/**
+ * ลบไฟล์จาก Google Drive
+ */
+function deleteDriveFile(fileId) {
+  // Validate fileId before calling Drive API
+  if (!fileId) {
+    return { success: false, message: 'ไม่ได้ระบุ File ID' };
+  }
+  var id = String(fileId).trim();
+  if (id === '' || id === 'undefined' || id === 'null') {
+    return { success: false, message: 'File ID ไม่ถูกต้อง: "' + id + '"' };
+  }
+  // Google Drive File IDs are typically 28-44 alphanumeric chars
+  if (!/^[a-zA-Z0-9_\-]{10,60}$/.test(id)) {
+    return { success: false, message: 'File ID ไม่ถูกรูปแบบ: "' + id + '"' };
+  }
+  try {
+    var file = DriveApp.getFileById(id);
+    file.setTrashed(true);
+    Logger.log('\u2705 ลบไฟล์สำเร็จ: ' + id);
+    return { success: true, message: 'ลบไฟล์สำเร็จ' };
+  } catch (e) {
+    Logger.log('\u274c deleteDriveFile id=' + id + ' error: ' + e.toString());
+    return { success: false, message: 'ลบไม่สำเร็จ: ' + e.message };
+  }
+}
+
+
+// ============================================
+// === getAllTrainingData() — ดึงทุกแถว ไม่มีเงื่อนไขกรอง ===
+// เรียงจากลำดับมากสุด (ล่าสุด) ไปน้อยสุด
+// ใช้สำหรับ: รายการล่าสุด (sf tab) และ ชม.5 tab
+// ============================================
+function getAllTrainingData() {
+  try {
+    var info    = getOrInitTrainingSheet();
+    var sheet   = info.sheet;
+    var hMap    = info.headerMap;
+    var lastRow = sheet.getLastRow();
+
+    if (lastRow <= 1) {
+      return { success: true, data: [] };
+    }
+
+    var dataRows = lastRow - 1;
+
+    // batch read ทุก column
+    var allData = sheet.getRange(2, 1, dataRows, info.headers.length).getValues();
+
+    // batch read URL formula + note + value จากคอลัมน์ "URL ไฟล์แนบ"
+    var urlColIdx   = hMap['URL ไฟล์แนบ'];
+    var nameColIdx  = hMap['ชื่อไฟล์แนบ'];
+    var urlFormulas = [], urlNotes = [], urlValues2 = [];
+    var nameFormulas2 = [], nameNotes2 = [];
+
+    if (urlColIdx !== undefined) {
+      var uRange = sheet.getRange(2, urlColIdx + 1, dataRows, 1);
+      var uFm    = uRange.getFormulas();
+      var uNt    = uRange.getNotes();
+      var uVl    = uRange.getValues();
+      for (var ri = 0; ri < dataRows; ri++) {
+        urlFormulas.push(uFm[ri][0] || '');
+        urlNotes.push(uNt[ri][0]    || '');
+        urlValues2.push(String(uVl[ri][0] || '').trim());
+      }
+    }
+
+    // batch read HYPERLINK formula จากคอลัมน์ "ชื่อไฟล์แนบ" เพื่อ fallback
+    if (nameColIdx !== undefined) {
+      var nRange = sheet.getRange(2, nameColIdx + 1, dataRows, 1);
+      var nFm    = nRange.getFormulas();
+      var nNt    = nRange.getNotes();
+      for (var ri2 = 0; ri2 < dataRows; ri2++) {
+        nameFormulas2.push(nFm[ri2][0] || '');
+        nameNotes2.push(nNt[ri2][0]    || '');
+      }
+    }
+
+    // helper สร้าง row object
+    function buildRecord(i) {
+      var rowRef  = allData[i];
+      var hMapRef = hMap;
+
+      var getVal = function(key) {
+        var ci = hMapRef[key];
+        return ci !== undefined ? rowRef[ci] : undefined;
+      };
+      var gStr = function(key) {
+        var v = getVal(key);
+        return String(v === null || v === undefined ? '' : v).trim();
+      };
+      var gDate = function(key) {
+        var v = getVal(key);
+        if (!v) return '';
+        try {
+          var d = (v instanceof Date) ? v : new Date(v);
+          return Utilities.formatDate(d, 'Asia/Bangkok', 'yyyy-MM-dd');
+        } catch(ex) { return ''; }
+      };
+      var gFloat = function(key) { return parseFloat(getVal(key)) || 0; };
+      var gTs = function(key) {
+        var v = getVal(key);
+        if (!v) return '';
+        try {
+          var d = (v instanceof Date) ? v : new Date(v);
+          return Utilities.formatDate(d, 'Asia/Bangkok', 'yyyy-MM-dd HH:mm');
+        } catch(ex) { return ''; }
+      };
+
+      // ── ดึง URL — ลำดับความสำคัญ: URL column → ชื่อไฟล์แนบ formula → note ──
+      var urls = [];
+
+      if (urlColIdx !== undefined) {
+        // 1. จาก "URL ไฟล์แนบ" formula
+        var uf = urlFormulas[i] || '';
+        if (uf && uf.toUpperCase().indexOf('HYPERLINK') !== -1) {
+          var mUF = uf.match(/https?:\/\/[^"'\s]+/g);
+          if (mUF) urls = urls.concat(mUF);
+        }
+        // 2. จาก "URL ไฟล์แนบ" note
+        var un = urlNotes[i] || '';
+        if (un) {
+          var mUN = un.match(/https?:\/\/[^\s\n]+/g);
+          if (mUN) urls = urls.concat(mUN);
+        }
+        // 3. จาก "URL ไฟล์แนบ" plain value (หลัง backfill)
+        var uv = urlValues2[i] || '';
+        if (uv && uv.indexOf('http') === 0) {
+          uv.split('\n').forEach(function(u) {
+            var t = u.trim();
+            if (t) urls.push(t);
+          });
+        }
+      }
+
+      // 4. fallback: ดึงจาก HYPERLINK formula ของ "ชื่อไฟล์แนบ"
+      if (urls.length === 0 && nameColIdx !== undefined) {
+        var nf = nameFormulas2[i] || '';
+        if (nf && nf.toUpperCase().indexOf('HYPERLINK') !== -1) {
+          var mNF = nf.match(/https?:\/\/[^"'\s]+/g);
+          if (mNF) urls = urls.concat(mNF);
+        }
+        var nn = nameNotes2[i] || '';
+        if (nn) {
+          var mNN = nn.match(/https?:\/\/[^\s\n]+/g);
+          if (mNN) urls = urls.concat(mNN);
+        }
+      }
+
+      // deduplicate
+      var seen = {};
+      urls = urls.filter(function(u) {
+        if (!u || seen[u]) return false;
+        seen[u] = true;
+        return true;
+      });
+
+      var seqRaw = gStr('ลำดับ');
+      var seqNum = seqRaw !== '' ? seqRaw : String(i + 2);
+
+      return {
+        savedAt    : gTs('Timestamp'),
+        seqNum     : seqNum,
+        name       : gStr('ชื่อ-สกุล') || gStr('ชื่อ'),
+        position   : gStr('ตำแหน่ง'),
+        mission    : gStr('กลุ่มภารกิจ'),
+        dept       : gStr('กลุ่มงาน'),
+        topic      : gStr('เรื่อง/หลักสูตร') || gStr('หลักสูตร') || gStr('เรื่อง'),
+        startDate  : gDate('วันที่เริ่ม'),
+        endDate    : gDate('วันที่สิ้นสุด'),
+        venue      : gStr('สถานที่'),
+        province   : gStr('จังหวัด'),
+        totalCost  : gFloat('รวมค่าใช้จ่าย'),
+        budget     : gStr('แหล่งงบประมาณ'),
+        fileNames  : gStr('ชื่อไฟล์แนบ'),
+        fileUrls   : urls.join('\n'),
+        // [FIX] รองรับทั้ง '✓' และชื่อไฟล์แนบ (เช่น 'สรุปงาน.pdf') — ถือว่ามีเอกสารเมื่อเซลล์ไม่ว่าง
+        docSummary : gStr('เอกสารสรุปผล').length > 0,
+        docContract: gStr('สัญญา').length        > 0,
+        docCert    : gStr('วุฒิบัตร').length     > 0,
+        docReceipt : gStr('ใบเสร็จ').length      > 0,
+        docHm5     : gStr('บันทึก ชม.5').length  > 0,
+        docApproval: gStr('บันทึกขออนุมัติ').length > 0,
+        docCombined: gStr('บันทึกความ+ชม.5').length > 0,
+        lineId     : gStr('LINE ID'),
+        recorder   : gStr('ผู้บันทึก'),
+        hm5        : gStr('เลขที่ ชม.5'),
+        memo       : gStr('เลขที่บันทึก'),
+        note       : gStr('หมายเหตุ'),
+        rowIndex   : i + 2,
+        costReg    : gFloat('ค่าลงทะเบียน'),
+        costTravel : gFloat('ค่าเบี้ยเลี้ยง'),
+        costHotel  : gFloat('ค่าที่พัก'),
+        costTrans  : gFloat('ค่าพาหนะ'),
+        costProj   : gFloat('เงินโครงการ')
+      };
+    }
+
+    // เรียงจากลำดับมากสุด (ล่าสุด) ไปน้อยสุด — รองรับชีทที่เรียงลำดับใดก็ได้
+    var seqColIdx3 = hMap['ลำดับ'];
+    var allRecords = [];
+    for (var i = 0; i < dataRows; i++) {
+      var rec = buildRecord(i);
+      if (!rec.name && !rec.seqNum) continue;
+      var seqV = seqColIdx3 !== undefined ? (parseFloat(allData[i][seqColIdx3]) || 0) : 0;
+      allRecords.push({ rec: rec, seq: seqV });
+    }
+    allRecords.sort(function(a, b) { return b.seq - a.seq; });
+    var results = allRecords.map(function(x) { return x.rec; });
+
+    Logger.log('\u2705 getAllTrainingData: คืน ' + results.length + ' รายการ');
+    return { success: true, data: results };
+
+  } catch (error) {
+    Logger.log('\u274c getAllTrainingData: ' + error.toString());
+    return { success: false, message: error.toString() };
+  }
+}
+// ============================================================
+// === getRecentFromRegistrations(limit) ===
+// ดึงรายการล่าสุดจาก Sheet Registrations (แท็บบันทึก)
+// เรียงตาม Timestamp ล่าสุดก่อน
+// ============================================================
+function getRecentFromRegistrations(limit) {
+  try {
+    limit = limit || 20;
+    var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var sheet = ss.getSheetByName('Registrations');
+    if (!sheet || sheet.getLastRow() <= 1) return { success: true, data: [] };
+
+    var data  = sheet.getDataRange().getValues();
+    var hdr   = data[0].map(function(h) { return String(h || '').trim(); });
+
+    var cName  = getColIdx(hdr, 'Full Name',     'ชื่อ-สกุล',       4);
+    var cDate  = getColIdx(hdr, 'Date',           'วันที่',           1);
+    var cEnd   = getColIdx(hdr, 'End Date',       'ถึงวันที่',        2);
+    var cTime  = getColIdx(hdr, 'Time',           'เวลา',             3);
+    var cPos   = getColIdx(hdr, 'Position',       'ตำแหน่ง',         5);
+    var cMis   = getColIdx(hdr, 'Mission Group',  'กลุ่มภารกิจ',     6);
+    var cDept  = getColIdx(hdr, 'Department',     'กลุ่มงาน',        7);
+    var cCat   = getColIdx(hdr, 'Category',       'หมวดหมู่',        8);
+    var cTopic = getColIdx(hdr, 'Topic',          'หัวข้อ/หลักสูตร', 9);
+    var cHrs   = getColIdx(hdr, 'Hours',          'จำนวนชั่วโมง',    10);
+    var cLoc   = getColIdx(hdr, 'Location',       'สถานที่',          13);
+    var cTs    = getColIdx(hdr, 'Timestamp',      'Timestamp',        0);
+    var cFN    = hdr.indexOf('ชื่อไฟล์แนบ');
+    var cFU    = hdr.indexOf('URL ไฟล์แนบ');
+
+    // เรียงตาม Timestamp ล่าสุดก่อน
+    var rows = [];
+    for (var i = 1; i < data.length; i++) {
+      var name = String(data[i][cName] || '').trim();
+      if (!name) continue;
+      var tsVal = data[i][cTs];
+      var tsMs  = (tsVal instanceof Date) ? tsVal.getTime()
+                : (tsVal ? new Date(tsVal).getTime() : 0);
+      if (isNaN(tsMs)) tsMs = 0;
+      rows.push({ rowIdx: i, tsMs: tsMs });
+    }
+    rows.sort(function(a, b) { return b.tsMs - a.tsMs; });
+
+    var results = [];
+    var take = Math.min(limit, rows.length);
+    for (var ti = 0; ti < take; ti++) {
+      var r   = data[rows[ti].rowIdx];
+      var hrs = parseFloat(r[cHrs]) || 0;
+
+      var d    = r[cDate] instanceof Date ? r[cDate] : new Date(r[cDate]);
+      var dStr = isNaN(d.getTime()) ? '' : Utilities.formatDate(d, 'Asia/Bangkok', 'yyyy-MM-dd');
+      var e    = r[cEnd]  instanceof Date ? r[cEnd]  : new Date(r[cEnd]);
+      var eStr = isNaN(e.getTime()) ? '' : Utilities.formatDate(e, 'Asia/Bangkok', 'yyyy-MM-dd');
+      var ts   = r[cTs]   instanceof Date ? r[cTs]   : new Date(r[cTs]);
+      var tsStr = isNaN(ts.getTime()) ? '' : Utilities.formatDate(ts, 'Asia/Bangkok', 'yyyy-MM-dd HH:mm');
+
+      results.push({
+        fullName    : String(r[cName]  || '').trim(),
+        date        : dStr,
+        endDate     : eStr,
+        time        : String(r[cTime]  || '').trim(),
+        position    : String(r[cPos]   || '').trim(),
+        missionGroup: String(r[cMis]   || '').trim(),
+        department  : String(r[cDept]  || '').trim(),
+        category    : String(r[cCat]   || '').trim(),
+        topic       : String(r[cTopic] || '').trim(),
+        hours       : hrs,
+        location    : String(r[cLoc]   || '').trim(),
+        savedAt     : tsStr,
+        tsMs        : rows[ti].tsMs,
+        fileNames   : cFN !== -1 ? String(r[cFN] || '').trim() : '',
+        fileUrls    : cFU !== -1 ? String(r[cFU] || '').trim() : ''
+      });
+    }
+
+    Logger.log('✅ getRecentFromRegistrations: คืน ' + results.length + ' รายการ');
+    return { success: true, data: results };
+  } catch(e) {
+    Logger.log('❌ getRecentFromRegistrations: ' + e);
+    return { success: false, message: e.toString() };
+  }
+}
+
+// ============================================================
+// === getRecentRecords(limit) — alias → getRecentTrainingRequests ===
+// เรียกจาก sfLoadRecentRecords() ในแท็บสรุปอบรม (HRD)
+// ============================================================
+function getRecentRecords(limit) {
+  return getRecentTrainingRequests(limit || 15);
+}
+
+// ============================================================
+// === trackLinkClick(linkId) ===
+// บันทึกจำนวนคลิก link ใน Learn Sidebar และ News Sidebar
+// เรียกจาก index.html → trackLearnClick(linkId)
+// เก็บใน ScriptProperties: "link_view_" + linkId
+// ============================================================
+function trackLinkClick(linkId) {
+  try {
+    if (!linkId) return;
+    var props = PropertiesService.getScriptProperties();
+    var key   = 'link_view_' + linkId;
+    var cur   = parseInt(props.getProperty(key) || '0', 10);
+    props.setProperty(key, String(cur + 1));
+    Logger.log('✅ trackLinkClick: ' + linkId + ' → ' + (cur + 1));
+  } catch (e) {
+    Logger.log('❌ trackLinkClick: ' + e.toString());
+  }
+}
+
+// ============================================================
+// === getLinkViews() ===
+// คืนค่า object { linkId: count } ทั้งหมดที่มี prefix "link_view_"
+// เรียกจาก index.html → loadLearnViewCounts()
+// ============================================================
+function getLinkViews() {
+  try {
+    var props = PropertiesService.getScriptProperties().getProperties();
+    var result = {};
+    Object.keys(props).forEach(function(key) {
+      if (key.indexOf('link_view_') === 0) {
+        var linkId = key.replace('link_view_', '');
+        result[linkId] = parseInt(props[key] || '0', 10);
+      }
+    });
+    Logger.log('✅ getLinkViews: คืน ' + Object.keys(result).length + ' รายการ');
+    return result;
+  } catch (e) {
+    Logger.log('❌ getLinkViews: ' + e.toString());
+    return {};
+  }
+}
+// ============================================================
+// === HRD Export Summary Functions
+// === เพิ่มใน รหัส.gs (วางต่อท้ายไฟล์)
+// === โรงพยาบาลสันทราย · พัฒนาโดย HRD Team 2569
+// ============================================================
+/**
+ * getHrdSummaryDataEnhanced(params)
+ * ปรับปรุงจาก getHrdSummaryData เดิม เพื่อตรวจสอบไฟล์แนบอย่างละเอียด
+ */
+function getHrdSummaryDataEnhanced(params) {
+  try {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var ts = ss.getSheetByName('อบรม ปีงบประมาณ 2569');
+    
+    if (!ts) {
+      return { success: false, message: 'ไม่พบ Sheet อบรมฯ', data: [], summary: _emptySum() };
+    }
+ 
+    var vals = ts.getDataRange().getValues();
+    var hdr  = vals[0];
+ 
+    function col(name, alt, def) {
+      var i = hdr.indexOf(name);
+      if (i < 0 && alt) i = hdr.indexOf(alt);
+      return (i < 0 ? def : i);
+    }
+ 
+    function gStr(row, c) { return (c < 0 || !row[c]) ? '' : String(row[c]).trim(); }
+    function gNum(row, c) { var v = parseFloat(row[c] || 0); return isNaN(v) ? 0 : v; }
+    function gDate(row, c) {
+      if (c < 0) return null;
+      var v = row[c];
+      if (!v) return null;
+      if (v instanceof Date) return v;
+      if (typeof v === 'string') {
+        var parts = v.split('/');
+        if (parts.length === 3) {
+          return new Date(+parts[2], +parts[1] - 1, +parts[0]);
+        }
+      }
+      return null;
+    }
+ 
+    function fmtDate(d) {
+      if (!d || !(d instanceof Date)) return '';
+      var dd = ('0' + d.getDate()).slice(-2);
+      var mm = ('0' + (d.getMonth()+1)).slice(-2);
+      var yy = d.getFullYear();
+      return dd + '/' + mm + '/' + yy;
+    }
+ 
+    var cName  = col('ชื่อ-สกุล');
+    var cPos   = col('ตำแหน่ง');
+    var cMis   = col('กลุ่มภารกิจ');
+    var cDept  = col('กลุ่มงาน');
+    var cTopic = col('เรื่อง/หลักสูตร', 'หลักสูตร/เรื่อง');
+    var cSDate = col('วันที่เริ่ม');
+    var cEDate = col('วันที่สิ้นสุด');
+    var cVenue = col('สถานที่');
+    var cProv  = col('จังหวัด');
+    var cHm5   = col('เลขที่ ชม.5');
+    var cMemo  = col('เลขที่บันทึก');
+    var cBudget= col('แหล่งงบประมาณ');
+    var cCostReg = col('ค่าลงทะเบียน');
+    var cCostTrav= col('ค่าเบี้ยเลี้ยง');
+    var cCostHotel=col('ค่าที่พัก');
+    var cCostTrans=col('ค่าพาหนะ');
+    var cCostProj =col('เงินโครงการ');
+    var cTotalCost=col('รวมค่าใช้จ่าย');
+    var cRec   = col('ผู้บันทึก');
+    var cTs    = col('วันที่บันทึก', 'Timestamp');
+    
+    // คอลัมน์เอกสาร - เพิ่มการตรวจสอบไฟล์แนบ
+    var cFileName = col('ชื่อไฟล์แนบ', '', -1);
+    var cFileURL  = col('URL ไฟล์แนบ', '', -1);
+    var cDocSum   = col('เอกสารสรุปผล', '', -1);
+    var cDocCon   = col('สัญญา', '', -1);
+    var cDocCert  = col('วุฒิบัตร', '', -1);
+    var cDocRec   = col('ใบเสร็จ', '', -1);
+    var cDocHm5   = col('บันทึก ชม.5', '', -1);
+    var cDocApp   = col('บันทึกขออนุมัติ', '', -1);
+    var cDocCom   = col('บันทึกความ+ชม.5', '', -1);
+ 
+    var filterStart = params.filterStart ? new Date(params.filterStart) : null;
+    var filterEnd   = params.filterEnd   ? new Date(params.filterEnd)   : null;
+    var results = [];
+ 
+    for (var i = 1; i < vals.length; i++) {
+      var row = vals[i];
+      if (!row[cName] && !row[cTopic]) continue;
+ 
+      var sDate = gDate(row, cSDate);
+      if (filterStart && sDate && sDate < filterStart) continue;
+      if (filterEnd   && sDate && sDate > filterEnd)   continue;
+ 
+      var name    = gStr(row, cName);
+      var mission = gStr(row, cMis);
+      var hm5     = gStr(row, cHm5);
+      var memo    = gStr(row, cMemo);
+      var budget  = gStr(row, cBudget);
+      var totalCost = gNum(row, cTotalCost);
+      var costReg   = gNum(row, cCostReg);
+      var costTrav  = gNum(row, cCostTrav);
+      var costHotel = gNum(row, cCostHotel);
+      var costTrans = gNum(row, cCostTrans);
+      var costProj  = gNum(row, cCostProj);
+      
+      var topic = gStr(row, cTopic);
+      
+      // 🆕 ตรวจสอบไฟล์แนบจากคอลัมน์
+      var hasFileName = cFileName >= 0 && gStr(row, cFileName).length > 0;
+      var hasFileURL  = cFileURL  >= 0 && gStr(row, cFileURL).length > 0;
+      var hasAttachment = hasFileName || hasFileURL;
+      
+      // 🆕 ตรวจสอบเอกสารสรุปผลจาก Registrations
+      var docSummaryFromReg = checkRegistrationDocuments(name, topic, sDate);
+      
+      // ตรวจสอบเอกสารแต่ละประเภท
+      var docSummary = (cDocSum >= 0 && gStr(row, cDocSum).length > 0) || docSummaryFromReg;
+      var docContract = cDocCon >= 0 && gStr(row, cDocCon).length > 0;
+      var docCert = cDocCert >= 0 && gStr(row, cDocCert).length > 0;
+      var docReceipt = cDocRec >= 0 && gStr(row, cDocRec).length > 0;
+      
+      // 🆕 ตรวจสอบ ชม.5, บันทึกขออนุมัติ, บันทึกความ+ชม.5 โดยดูจากทั้งเซลล์และไฟล์แนบ
+      var docHm5 = (cDocHm5 >= 0 && gStr(row, cDocHm5).length > 0) || hasAttachment;
+      var docApproval = (cDocApp >= 0 && gStr(row, cDocApp).length > 0) || hasAttachment;
+      var docCombined = (cDocCom >= 0 && gStr(row, cDocCom).length > 0) || hasAttachment;
+ 
+      results.push({
+        name     : name,
+        position : gStr(row, cPos),
+        mission  : mission,
+        dept     : gStr(row, cDept),
+        topic    : topic,
+        startDate: fmtDate(sDate),
+        endDate  : fmtDate(gDate(row, cEDate)),
+        venue    : gStr(row, cVenue),
+        province : gStr(row, cProv),
+        hm5      : hm5,
+        memo     : memo,
+        budget   : budget,
+        totalCost: totalCost,
+        costReg  : costReg,
+        costTravel: costTrav,
+        costHotel: costHotel,
+        costTrans: costTrans,
+        costProj : costProj,
+        docSummary : docSummary,
+        docContract: docContract,
+        docCert    : docCert,
+        docReceipt : docReceipt,
+        docHm5     : docHm5,
+        docApproval: docApproval,
+        docCombined: docCombined,
+        recorder : gStr(row, cRec),
+        savedAt  : fmtDate(gDate(row, cTs))
+      });
+    }
+ 
+    var summary = _buildSummaryEnhanced(results);
+    Logger.log('✅ getHrdSummaryDataEnhanced: ' + results.length + ' รายการ');
+    return { success: true, data: results, summary: summary };
+ 
+  } catch(e) {
+    Logger.log('❌ getHrdSummaryDataEnhanced: ' + e.toString());
+    return { success: false, message: e.toString(), data: [], summary: _emptySum() };
+  }
+}
+
+/**
+ * _buildSummaryEnhanced(data)
+ * สร้าง object สรุปสถิติจาก array ข้อมูล พร้อมสรุปตามหมวดหมู่
+ */
+function _buildSummaryEnhanced(data) {
+  var totalCost = 0;
+  var personSet = {};
+  var missionMap = {};
+  var budgetMap  = {};
+  var categoryMap = {}; // 🆕 เพิ่มการจัดกลุ่มตามหมวดหมู่
+  var docComplete = 0;
+ 
+  data.forEach(function(r) {
+    totalCost += (r.totalCost || 0);
+    if (r.name)    personSet[r.name] = true;
+    if (r.mission) {
+      missionMap[r.mission] = (missionMap[r.mission] || 0) + 1;
+      
+      // 🆕 สรุปตามหมวดหมู่/กลุ่มภารกิจ
+      if (!categoryMap[r.mission]) {
+        categoryMap[r.mission] = {
+          count: 0,
+          totalCost: 0,
+          docComplete: 0,
+          persons: {}
+        };
+      }
+      categoryMap[r.mission].count++;
+      categoryMap[r.mission].totalCost += (r.totalCost || 0);
+      if (r.docHm5 || r.docApproval || r.docCombined) {
+        categoryMap[r.mission].docComplete++;
+      }
+      if (r.name) {
+        categoryMap[r.mission].persons[r.name] = true;
+      }
+    }
+    if (r.budget)  budgetMap[r.budget] = (budgetMap[r.budget] || 0) + (r.totalCost || 0);
+    if (r.docHm5 || r.docApproval || r.docCombined) docComplete++;
+  });
+ 
+  return {
+    totalRecords : data.length,
+    totalPersons : Object.keys(personSet).length,
+    totalCost    : totalCost,
+    docComplete  : docComplete,
+    missionBreakdown : missionMap,
+    budgetBreakdown  : budgetMap,
+    categoryBreakdown: categoryMap // 🆕
+  };
+}
+ 
+function _emptySum() {
+  return { 
+    totalRecords: 0, 
+    totalPersons: 0, 
+    totalCost: 0, 
+    docComplete: 0, 
+    missionBreakdown: {}, 
+    budgetBreakdown: {},
+    categoryBreakdown: {}
+  };
+}
+
+// ============================================================
+// === exportHrdToSheet(params)
+// === สร้าง Sheet สรุปผลใหม่ใน Spreadsheet และ return URL
+// === (ทางเลือก: ถ้าต้องการ export ผ่าน GAS backend แทน client-side)
+// ============================================================
+function exportHrdToSheet(params) {
+  try {
+    var result = getHrdSummaryData(params);
+    if (!result.success || result.data.length === 0) {
+      return { success: false, message: 'ไม่พบข้อมูลในช่วงเวลาที่เลือก' };
+    }
+
+    var data    = result.data;
+    var summary = result.summary;
+    var label   = String(params.periodLabel || 'Export').replace(/[\/\\:*?"<>|]/g,'_').substring(0,40);
+    var ss      = SpreadsheetApp.openById(SPREADSHEET_ID);
+
+    // ─── ลบ Sheet เก่าถ้ามี ───
+    var sheetName = 'Export_' + label;
+    var existing  = ss.getSheetByName(sheetName);
+    if (existing) ss.deleteSheet(existing);
+
+    var sheet = ss.insertSheet(sheetName);
+    var now   = new Date();
+
+    // ─── หัวรายงาน ───
+    sheet.getRange('A1').setValue('สรุปผลการพัฒนาบุคลากร (HRD)');
+    sheet.getRange('A1').setFontSize(16).setFontWeight('bold').setFontColor('#1e3a8a');
+    sheet.getRange('A2').setValue('โรงพยาบาลสันทราย · ช่วงเวลา: ' + label);
+    sheet.getRange('A3').setValue('พิมพ์วันที่: ' + Utilities.formatDate(now, 'Asia/Bangkok', 'dd/MM/yyyy HH:mm'));
+    sheet.getRange('A4').setValue('');
+
+    // ─── แถวสรุปสถิติ ───
+    var sumRow = 5;
+    sheet.getRange(sumRow, 1).setValue('📋 จำนวนรายการ').setFontWeight('bold');
+    sheet.getRange(sumRow, 2).setValue(summary.totalRecords);
+    sheet.getRange(sumRow, 3).setValue('👤 บุคลากร').setFontWeight('bold');
+    sheet.getRange(sumRow, 4).setValue(summary.totalPersons + ' คน');
+    sheet.getRange(sumRow, 5).setValue('💰 รวมค่าใช้จ่าย').setFontWeight('bold');
+    sheet.getRange(sumRow, 6).setValue(summary.totalCost);
+    sheet.getRange(sumRow, 6).setNumberFormat('#,##0.00');
+    sheet.getRange(sumRow, 7).setValue('📋 เอกสารครบ').setFontWeight('bold');
+    sheet.getRange(sumRow, 8).setValue(summary.docComplete + ' รายการ');
+
+    // ─── Header ตาราง ───
+    var headers = [
+      'ลำดับ','ชื่อ-สกุล','ตำแหน่ง','กลุ่มภารกิจ','กลุ่มงาน',
+      'หลักสูตร/เรื่อง','วันที่เริ่ม','วันที่สิ้นสุด','สถานที่','จังหวัด',
+      'เลขที่ ชม.5','เลขที่บันทึก','แหล่งงบ',
+      'ค่าลงทะเบียน','ค่าเบี้ยเลี้ยง','ค่าที่พัก','ค่าพาหนะ','เงินโครงการ','รวม',
+      'สรุป','สัญญา','วุฒิ','ใบเสร็จ','ชม.5','ขออนุมัติ','รวม+ชม.5',
+      'ผู้บันทึก'
+    ];
+    var hdrRow = 7;
+    var hdrRange = sheet.getRange(hdrRow, 1, 1, headers.length);
+    hdrRange.setValues([headers]);
+    hdrRange.setBackground('#1e3a8a').setFontColor('#ffffff').setFontWeight('bold').setFontSize(12);
+    sheet.setFrozenRows(hdrRow);
+
+    // ─── ข้อมูล ───
+    var rows = data.map(function(r, i) {
+      function bool(v) { return v ? '✓' : ''; }
+      return [
+        i+1, r.name||'', r.position||'', r.mission||'', r.dept||'',
+        r.topic||'', r.startDate||'', r.endDate||'', r.venue||'', r.province||'',
+        r.hm5||'', r.memo||'', r.budget||'',
+        r.costReg||0, r.costTravel||0, r.costHotel||0, r.costTrans||0, r.costProj||0, r.totalCost||0,
+        bool(r.docSummary), bool(r.docContract), bool(r.docCert), bool(r.docReceipt),
+        bool(r.docHm5), bool(r.docApproval), bool(r.docCombined),
+        r.recorder||''
+      ];
+    });
+
+    if (rows.length > 0) {
+      var dataRange = sheet.getRange(hdrRow+1, 1, rows.length, headers.length);
+      dataRange.setValues(rows);
+      // จัดรูปแบบคอลัมน์เงิน (ลำดับ 14–19 = index 13–18)
+      for (var c = 14; c <= 19; c++) {
+        sheet.getRange(hdrRow+1, c, rows.length, 1).setNumberFormat('#,##0.00');
+      }
+      // สลับสีแถว
+      for (var r2 = 0; r2 < rows.length; r2++) {
+        var bg = (r2 % 2 === 0) ? '#f8fafc' : '#ffffff';
+        sheet.getRange(hdrRow+1+r2, 1, 1, headers.length).setBackground(bg);
+      }
+    }
+
+    // ─── Auto-resize ───
+    sheet.autoResizeColumns(1, headers.length);
+
+    // ─── Sheet สรุปตามงบประมาณ ───
+    var budgetData = Object.keys(summary.budgetBreakdown).map(function(k) {
+      return [k, summary.budgetBreakdown[k]];
+    });
+    if (budgetData.length > 0) {
+      var budgetStartRow = hdrRow + rows.length + 3;
+      sheet.getRange(budgetStartRow, 1).setValue('📊 สรุปตามแหล่งงบประมาณ').setFontWeight('bold').setFontColor('#1e3a8a').setFontSize(13);
+      sheet.getRange(budgetStartRow+1, 1).setValue('แหล่งงบ').setFontWeight('bold').setBackground('#e2e8f0');
+      sheet.getRange(budgetStartRow+1, 2).setValue('รวม (บาท)').setFontWeight('bold').setBackground('#e2e8f0');
+      budgetData.forEach(function(row, idx) {
+        sheet.getRange(budgetStartRow+2+idx, 1).setValue(row[0]);
+        sheet.getRange(budgetStartRow+2+idx, 2).setValue(row[1]).setNumberFormat('#,##0.00');
+      });
+    }
+
+    SpreadsheetApp.flush();
+
+    var url = 'https://docs.google.com/spreadsheets/d/' + SPREADSHEET_ID
+            + '/edit#gid=' + sheet.getSheetId();
+
+    Logger.log('✅ exportHrdToSheet: สร้าง Sheet "' + sheetName + '" สำเร็จ url=' + url);
+    return { success: true, url: url, sheetName: sheetName, summary: summary };
+
+  } catch(e) {
+    Logger.log('❌ exportHrdToSheet: ' + e.toString());
+    return { success: false, message: e.toString() };
+  }
+}
+// ============================================================
+// === 🆕 exportHrdToSheetEnhanced(params)
+// === สร้าง Sheet สรุปผลใหม่พร้อมตรวจสอบเอกสารและสรุปตามหมวดหมู่
+// ============================================================
+function exportHrdToSheetEnhanced(params) {
+  try {
+    var result = getHrdSummaryDataEnhanced(params);
+    if (!result.success || result.data.length === 0) {
+      return { success: false, message: 'ไม่พบข้อมูลในช่วงเวลาที่เลือก' };
+    }
+ 
+    var data    = result.data;
+    var summary = result.summary;
+    var label   = String(params.periodLabel || 'Export').replace(/[\/\\:*?"<>|]/g,'_').substring(0,40);
+    var ss      = SpreadsheetApp.openById(SPREADSHEET_ID);
+ 
+    // ─── ลบ Sheet เก่าถ้ามี ───
+    var sheetName = 'Export_' + label;
+    var existing  = ss.getSheetByName(sheetName);
+    if (existing) ss.deleteSheet(existing);
+ 
+    var sheet = ss.insertSheet(sheetName);
+    var now   = new Date();
+ 
+    // ─── หัวรายงาน ───
+    sheet.getRange('A1').setValue('สรุปผลการพัฒนาบุคลากร (HRD)');
+    sheet.getRange('A1').setFontSize(16).setFontWeight('bold').setFontColor('#1e3a8a');
+    sheet.getRange('A2').setValue('โรงพยาบาลสันทราย · ช่วงเวลา: ' + label);
+    sheet.getRange('A3').setValue('พิมพ์วันที่: ' + Utilities.formatDate(now, 'Asia/Bangkok', 'dd/MM/yyyy HH:mm'));
+    sheet.getRange('A4').setValue('');
+ 
+    // ─── แถวสรุปสถิติ ───
+    var sumRow = 5;
+    sheet.getRange(sumRow, 1).setValue('📋 จำนวนรายการ').setFontWeight('bold');
+    sheet.getRange(sumRow, 2).setValue(summary.totalRecords);
+    sheet.getRange(sumRow, 3).setValue('👤 บุคลากร').setFontWeight('bold');
+    sheet.getRange(sumRow, 4).setValue(summary.totalPersons + ' คน');
+    sheet.getRange(sumRow, 5).setValue('💰 รวมค่าใช้จ่าย').setFontWeight('bold');
+    sheet.getRange(sumRow, 6).setValue(summary.totalCost);
+    sheet.getRange(sumRow, 6).setNumberFormat('#,##0.00');
+    sheet.getRange(sumRow, 7).setValue('📋 เอกสารครบ').setFontWeight('bold');
+    sheet.getRange(sumRow, 8).setValue(summary.docComplete + ' รายการ');
+ 
+    // ─── Header ตาราง ───
+    var headers = [
+      'ลำดับ','ชื่อ-สกุล','ตำแหน่ง','กลุ่มภารกิจ','กลุ่มงาน',
+      'หลักสูตร/เรื่อง','วันที่เริ่ม','วันที่สิ้นสุด','สถานที่','จังหวัด',
+      'เลขที่ ชม.5','เลขที่บันทึก','แหล่งงบ',
+      'ค่าลงทะเบียน','ค่าเบี้ยเลี้ยง','ค่าที่พัก','ค่าพาหนะ','เงินโครงการ','รวม',
+      'เอกสารสรุปผล','สัญญา','วุฒิบัตร','ใบเสร็จ','ชม.5','บันทึกขออนุมัติ','บันทึกความ+ชม.5',
+      'ผู้บันทึก'
+    ];
+    var hdrRow = 7;
+    var hdrRange = sheet.getRange(hdrRow, 1, 1, headers.length);
+    hdrRange.setValues([headers]);
+    hdrRange.setBackground('#1e3a8a').setFontColor('#ffffff').setFontWeight('bold').setFontSize(12);
+    sheet.setFrozenRows(hdrRow);
+ 
+    // ─── ข้อมูล ───
+    var rows = data.map(function(r, i) {
+      function bool(v) { return v ? '✓' : ''; }
+      return [
+        i+1, r.name||'', r.position||'', r.mission||'', r.dept||'',
+        r.topic||'', r.startDate||'', r.endDate||'', r.venue||'', r.province||'',
+        r.hm5||'', r.memo||'', r.budget||'',
+        r.costReg||0, r.costTravel||0, r.costHotel||0, r.costTrans||0, r.costProj||0, r.totalCost||0,
+        bool(r.docSummary), bool(r.docContract), bool(r.docCert), bool(r.docReceipt),
+        bool(r.docHm5), bool(r.docApproval), bool(r.docCombined),
+        r.recorder||''
+      ];
+    });
+ 
+    if (rows.length > 0) {
+      var dataRange = sheet.getRange(hdrRow+1, 1, rows.length, headers.length);
+      dataRange.setValues(rows);
+      // จัดรูปแบบคอลัมน์เงิน (ลำดับ 14–19 = index 13–18)
+      for (var c = 14; c <= 19; c++) {
+        sheet.getRange(hdrRow+1, c, rows.length, 1).setNumberFormat('#,##0.00');
+      }
+      // สลับสีแถว
+      for (var r2 = 0; r2 < rows.length; r2++) {
+        var bg = (r2 % 2 === 0) ? '#f8fafc' : '#ffffff';
+        sheet.getRange(hdrRow+1+r2, 1, 1, headers.length).setBackground(bg);
+      }
+    }
+ 
+    // ─── Auto-resize ───
+    sheet.autoResizeColumns(1, headers.length);
+ 
+    var nextStartRow = hdrRow + rows.length + 3;
+ 
+    // ─── 🆕 สรุปตามหมวดหมู่/กลุ่มภารกิจ ───
+    var categoryData = Object.keys(summary.categoryBreakdown).map(function(k) {
+      var cat = summary.categoryBreakdown[k];
+      return [
+        k, 
+        cat.count, 
+        Object.keys(cat.persons).length,
+        cat.totalCost,
+        cat.docComplete
+      ];
+    });
+    
+    if (categoryData.length > 0) {
+      sheet.getRange(nextStartRow, 1).setValue('📊 สรุปตามหมวดหมู่/กลุ่มภารกิจ')
+        .setFontWeight('bold').setFontColor('#1e3a8a').setFontSize(13);
+      
+      var catHeaders = ['กลุ่มภารกิจ', 'จำนวนรายการ', 'จำนวนบุคลากร', 'รวมค่าใช้จ่าย (บาท)', 'เอกสารครบ'];
+      var catHeaderRange = sheet.getRange(nextStartRow+1, 1, 1, catHeaders.length);
+      catHeaderRange.setValues([catHeaders]);
+      catHeaderRange.setFontWeight('bold').setBackground('#e2e8f0');
+      
+      categoryData.forEach(function(row, idx) {
+        sheet.getRange(nextStartRow+2+idx, 1).setValue(row[0]);
+        sheet.getRange(nextStartRow+2+idx, 2).setValue(row[1]);
+        sheet.getRange(nextStartRow+2+idx, 3).setValue(row[2]);
+        sheet.getRange(nextStartRow+2+idx, 4).setValue(row[3]).setNumberFormat('#,##0.00');
+        sheet.getRange(nextStartRow+2+idx, 5).setValue(row[4]);
+      });
+      
+      nextStartRow = nextStartRow + categoryData.length + 4;
+    }
+ 
+    // ─── สรุปตามงบประมาณ ───
+    var budgetData = Object.keys(summary.budgetBreakdown).map(function(k) {
+      return [k, summary.budgetBreakdown[k]];
+    });
+    
+    if (budgetData.length > 0) {
+      sheet.getRange(nextStartRow, 1).setValue('📊 สรุปตามแหล่งงบประมาณ')
+        .setFontWeight('bold').setFontColor('#1e3a8a').setFontSize(13);
+      sheet.getRange(nextStartRow+1, 1).setValue('แหล่งงบ').setFontWeight('bold').setBackground('#e2e8f0');
+      sheet.getRange(nextStartRow+1, 2).setValue('รวม (บาท)').setFontWeight('bold').setBackground('#e2e8f0');
+      
+      budgetData.forEach(function(row, idx) {
+        sheet.getRange(nextStartRow+2+idx, 1).setValue(row[0]);
+        sheet.getRange(nextStartRow+2+idx, 2).setValue(row[1]).setNumberFormat('#,##0.00');
+      });
+    }
+ 
+    SpreadsheetApp.flush();
+ 
+    var url = 'https://docs.google.com/spreadsheets/d/' + SPREADSHEET_ID
+            + '/edit#gid=' + sheet.getSheetId();
+ 
+    Logger.log('✅ exportHrdToSheetEnhanced: สร้าง Sheet "' + sheetName + '" สำเร็จ url=' + url);
+    return { success: true, url: url, sheetName: sheetName, summary: summary };
+ 
+  } catch(e) {
+    Logger.log('❌ exportHrdToSheetEnhanced: ' + e.toString());
+    return { success: false, message: e.toString() };
+  }
+}
+ 
+// ============================================================
+// === 🔄 ฟังก์ชัน wrapper เพื่อความเข้ากันได้กับโค้ดเดิม
+// === เรียกใช้ฟังก์ชันใหม่แทนฟังก์ชันเดิม
+// ============================================================
+ 
+function getHrdSummaryData(params) {
+  return getHrdSummaryDataEnhanced(params);
+}
+ 
+function exportHrdToSheet(params) {
+  return exportHrdToSheetEnhanced(params);
+}
+// ============================================================
+// === 🆕 ฟังก์ชันตรวจสอบไฟล์แนบจาก Registrations
+// === ใช้ตรวจสอบว่ามีเอกสารสรุปผลจากผู้ลงทะเบียนหรือไม่
+// ============================================================
+ 
+/**
+ * checkRegistrationDocuments(fullName, topic, startDate)
+ * ตรวจสอบว่ามีเอกสารสรุปผลจาก sheet Registrations หรือไม่
+ * 
+ * @param {string} fullName - ชื่อ-สกุล
+ * @param {string} topic - หัวข้อการอบรม
+ * @param {Date} startDate - วันที่เริ่ม
+ * @return {boolean} - มีเอกสารสรุปผล = true
+ */
+function checkRegistrationDocuments(fullName, topic, startDate) {
+  try {
+    var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    var regSheet = ss.getSheetByName('Registrations');
+    
+    if (!regSheet) {
+      Logger.log('⚠️ ไม่พบ sheet Registrations');
+      return false;
+    }
+    
+    var data = regSheet.getDataRange().getValues();
+    var headers = data[0];
+    
+    // หาตำแหน่งคอลัมน์
+    var colFullName = headers.indexOf('Full Name');
+    var colTopic = headers.indexOf('Topic');
+    var colDateIn = headers.indexOf('Date-in');
+    var colFileName = headers.indexOf('ชื่อไฟล์แนบ');
+    var colFileURL = headers.indexOf('URL ไฟล์แนบ');
+    
+    if (colFullName < 0 || colTopic < 0) {
+      return false;
+    }
+    
+    // ค้นหาแถวที่ตรงกัน
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      
+      // ตรวจสอบความตรงกัน
+      var nameMatch = String(row[colFullName] || '').trim() === String(fullName || '').trim();
+      var topicMatch = String(row[colTopic] || '').trim() === String(topic || '').trim();
+      
+      if (nameMatch && topicMatch) {
+        // ตรวจสอบว่ามีไฟล์แนบหรือไม่
+        var hasFileName = colFileName >= 0 && String(row[colFileName] || '').trim().length > 0;
+        var hasFileURL = colFileURL >= 0 && String(row[colFileURL] || '').trim().length > 0;
+        
+        if (hasFileName || hasFileURL) {
+          return true;
+        }
+      }
+    }
+    
+    return false;
+    
+  } catch (e) {
+    Logger.log('❌ checkRegistrationDocuments error: ' + e.toString());
+    return false;
+  }
+}
